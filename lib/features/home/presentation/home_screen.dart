@@ -45,6 +45,7 @@ class HomeScreen extends StatelessWidget {
                       final callsignAction = _CallsignAction(
                         callsign: callsign,
                         onEdit: onEditCallsign,
+                        fillAvailableWidth: constraints.maxWidth < 360,
                       );
 
                       if (constraints.maxWidth < 360) {
@@ -112,24 +113,25 @@ class HomeScreen extends StatelessWidget {
 }
 
 class _CallsignAction extends StatelessWidget {
-  const _CallsignAction({required this.callsign, required this.onEdit});
+  const _CallsignAction({
+    required this.callsign,
+    required this.onEdit,
+    this.fillAvailableWidth = false,
+  });
 
   final String callsign;
   final VoidCallback onEdit;
+  final bool fillAvailableWidth;
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: fillAvailableWidth ? MainAxisSize.max : MainAxisSize.min,
       children: [
-        Flexible(
-          child: Text(
-            callsign,
-            key: const Key('homeCallsign'),
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-        ),
+        if (fillAvailableWidth)
+          Expanded(child: _CallsignText(callsign))
+        else
+          Flexible(child: _CallsignText(callsign)),
         IconButton(
           key: const Key('editCallsignButton'),
           tooltip: 'Change callsign',
@@ -139,6 +141,21 @@ class _CallsignAction extends StatelessWidget {
       ],
     );
   }
+}
+
+class _CallsignText extends StatelessWidget {
+  const _CallsignText(this.callsign);
+
+  final String callsign;
+
+  @override
+  Widget build(BuildContext context) => Text(
+    callsign,
+    key: const Key('homeCallsign'),
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+    style: Theme.of(context).textTheme.titleMedium,
+  );
 }
 
 class _TransportButton extends StatelessWidget {
@@ -180,13 +197,17 @@ class _Status extends StatelessWidget {
               : OpenQspColors.secondaryText,
         ),
         const SizedBox(width: 9),
-        Text(
-          state.label,
-          style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-            color: positive
-                ? OpenQspColors.positive
-                : OpenQspColors.secondaryText,
-            fontWeight: FontWeight.w600,
+        Expanded(
+          child: Text(
+            state.label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+              color: positive
+                  ? OpenQspColors.positive
+                  : OpenQspColors.secondaryText,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ),
       ],
@@ -210,13 +231,37 @@ class _CapabilityTile extends StatelessWidget {
       side: const BorderSide(color: OpenQspColors.border),
       borderRadius: BorderRadius.circular(10),
     ),
-    child: ListTile(
+    child: InkWell(
+      borderRadius: BorderRadius.circular(10),
       onTap: () {},
-      minTileHeight: 72,
-      leading: Icon(icon, color: OpenQspColors.brand),
-      title: Text(title),
-      subtitle: Text(subtitle),
-      trailing: const Icon(Icons.chevron_right),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            Icon(icon, color: OpenQspColors.brand),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: OpenQspColors.secondaryText,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+      ),
     ),
   );
 }
