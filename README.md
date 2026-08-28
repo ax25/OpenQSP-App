@@ -3,8 +3,8 @@ Multiplatform OpenQSP Client App
 
 ## Server configuration
 
-The Internet API is configured through the `.env` asset. Copy `.env.example`
-when creating another environment and set `OPENQSP_SERVER_HOST`,
+The Internet API is configured through the `.env` asset. Copy `.env.example` to
+`.env` for local development, then set `OPENQSP_SERVER_HOST`,
 `OPENQSP_SERVER_PORT`, and `OPENQSP_SERVER_SSL`. Do not put passwords or tokens
 in a bundled environment file.
 

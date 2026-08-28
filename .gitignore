@@ -33,8 +33,9 @@ migrate_working_dir/
 /build/
 /coverage/
 
-# Environment files may contain credentials in future deployments. The checked-in
-# development file is explicitly unignored below; keep other variants local.
+# Environment files may contain credentials in future deployments. Keep local
+# configuration private while retaining the non-secret example template.
+.env
 .env.*
 !.env.example
 

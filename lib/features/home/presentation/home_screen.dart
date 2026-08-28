@@ -6,6 +6,7 @@ import '../../../core/network/server_status_client.dart';
 enum ServerConnectionState {
   checking('Checking server...'),
   available('Server available'),
+  connected('Connected to server'),
   unavailable('Server unavailable');
 
   const ServerConnectionState(this.label);
