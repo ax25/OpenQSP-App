@@ -71,4 +71,31 @@ void main() {
     field = tester.widget<TextField>(callsignField);
     expect(field.controller?.text, 'EA3GNU-5');
   });
+
+  testWidgets('form stays fluid in a narrow viewport', (tester) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const OpenQspApp());
+
+    expect(tester.getSize(callsignField).width, 352);
+    expect(tester.getSize(continueButton).width, 352);
+  });
+
+  testWidgets('form is centered and constrained in a wide viewport', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(const OpenQspApp());
+
+    expect(tester.getSize(callsignField).width, 420);
+    expect(tester.getSize(continueButton).width, 420);
+    expect(tester.getCenter(callsignField).dx, 600);
+  });
 }

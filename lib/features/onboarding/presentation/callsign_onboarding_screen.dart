@@ -82,40 +82,49 @@ class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
 
             return SingleChildScrollView(
               padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(height: topSpace),
-                  Text(
-                    'OpenQSP',
-                    style: Theme.of(context).textTheme.displaySmall,
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 420),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(height: topSpace),
+                      Text(
+                        'OpenQSP',
+                        style: Theme.of(context).textTheme.displaySmall,
+                      ),
+                      const SizedBox(height: 36),
+                      Text(
+                        'Insert your callsign',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 28),
+                      TextField(
+                        key: const Key('callsignField'),
+                        controller: _callsignController,
+                        textCapitalization: TextCapitalization.characters,
+                        textInputAction: TextInputAction.done,
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        inputFormatters: const [
+                          _UppercaseTextInputFormatter(),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'Callsign',
+                        ),
+                        onChanged: _callsignChanged,
+                        onSubmitted: _canContinue ? (_) => _continue() : null,
+                      ),
+                      const SizedBox(height: 24),
+                      ElevatedButton(
+                        key: const Key('continueButton'),
+                        onPressed: _canContinue ? _continue : null,
+                        child: const Text('Continue'),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
                   ),
-                  const SizedBox(height: 36),
-                  Text(
-                    'Insert your callsign',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 28),
-                  TextField(
-                    key: const Key('callsignField'),
-                    controller: _callsignController,
-                    textCapitalization: TextCapitalization.characters,
-                    textInputAction: TextInputAction.done,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    inputFormatters: const [_UppercaseTextInputFormatter()],
-                    decoration: const InputDecoration(labelText: 'Callsign'),
-                    onChanged: _callsignChanged,
-                    onSubmitted: _canContinue ? (_) => _continue() : null,
-                  ),
-                  const SizedBox(height: 24),
-                  ElevatedButton(
-                    key: const Key('continueButton'),
-                    onPressed: _canContinue ? _continue : null,
-                    child: const Text('Continue'),
-                  ),
-                  const SizedBox(height: 24),
-                ],
+                ),
               ),
             );
           },
