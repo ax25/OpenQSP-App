@@ -1,6 +1,39 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+class _UppercaseTextInputFormatter extends TextInputFormatter {
+  const _UppercaseTextInputFormatter();
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    final uppercasedText = newValue.text.toUpperCase();
+
+    int uppercasedOffset(int offset) {
+      if (offset < 0) return offset;
+      return newValue.text.substring(0, offset).toUpperCase().length;
+    }
+
+    return newValue.copyWith(
+      text: uppercasedText,
+      selection: TextSelection(
+        baseOffset: uppercasedOffset(newValue.selection.baseOffset),
+        extentOffset: uppercasedOffset(newValue.selection.extentOffset),
+        affinity: newValue.selection.affinity,
+        isDirectional: newValue.selection.isDirectional,
+      ),
+      composing: newValue.composing.isValid
+          ? TextRange(
+              start: uppercasedOffset(newValue.composing.start),
+              end: uppercasedOffset(newValue.composing.end),
+            )
+          : TextRange.empty,
+    );
+  }
+}
+
 class CallsignOnboardingScreen extends StatefulWidget {
   const CallsignOnboardingScreen({super.key});
 
@@ -20,10 +53,21 @@ class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
   }
 
   void _callsignChanged(String value) {
-    final canContinue = value.isNotEmpty;
+    final canContinue = value.trim().isNotEmpty;
     if (canContinue != _canContinue) {
       setState(() => _canContinue = canContinue);
     }
+  }
+
+  void _continue() {
+    final normalizedCallsign = _callsignController.text.trim();
+    if (normalizedCallsign.isEmpty) return;
+
+    _callsignController.value = TextEditingValue(
+      text: normalizedCallsign,
+      selection: TextSelection.collapsed(offset: normalizedCallsign.length),
+    );
+    FocusManager.instance.primaryFocus?.unfocus();
   }
 
   @override
@@ -59,24 +103,15 @@ class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
                     textInputAction: TextInputAction.done,
                     autocorrect: false,
                     enableSuggestions: false,
-                    inputFormatters: [
-                      TextInputFormatter.withFunction((oldValue, newValue) {
-                        final normalized = newValue.text.trim().toUpperCase();
-                        return TextEditingValue(
-                          text: normalized,
-                          selection: TextSelection.collapsed(
-                            offset: normalized.length,
-                          ),
-                        );
-                      }),
-                    ],
+                    inputFormatters: const [_UppercaseTextInputFormatter()],
                     decoration: const InputDecoration(labelText: 'Callsign'),
                     onChanged: _callsignChanged,
+                    onSubmitted: _canContinue ? (_) => _continue() : null,
                   ),
                   const SizedBox(height: 24),
                   ElevatedButton(
                     key: const Key('continueButton'),
-                    onPressed: _canContinue ? () {} : null,
+                    onPressed: _canContinue ? _continue : null,
                     child: const Text('Continue'),
                   ),
                   const SizedBox(height: 24),

@@ -34,15 +34,41 @@ void main() {
     expect(button.onPressed, isNotNull);
   });
 
-  testWidgets('callsign input is trimmed and normalized to uppercase', (
+  testWidgets('callsign input is normalized without moving the selection', (
     tester,
   ) async {
+    await tester.pumpWidget(const OpenQspApp());
+
+    await tester.showKeyboard(callsignField);
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'ea3gnu',
+        selection: TextSelection(baseOffset: 2, extentOffset: 4),
+      ),
+    );
+    await tester.pump();
+
+    final field = tester.widget<TextField>(callsignField);
+    expect(field.controller?.text, 'EA3GNU');
+    expect(
+      field.controller?.selection,
+      const TextSelection(baseOffset: 2, extentOffset: 4),
+    );
+  });
+
+  testWidgets('surrounding whitespace is trimmed on Continue', (tester) async {
     await tester.pumpWidget(const OpenQspApp());
 
     await tester.enterText(callsignField, ' ea3gnu-5 ');
     await tester.pump();
 
-    final field = tester.widget<TextField>(callsignField);
+    var field = tester.widget<TextField>(callsignField);
+    expect(field.controller?.text, ' EA3GNU-5 ');
+
+    await tester.tap(continueButton);
+    await tester.pump();
+
+    field = tester.widget<TextField>(callsignField);
     expect(field.controller?.text, 'EA3GNU-5');
   });
 }
