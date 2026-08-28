@@ -4,6 +4,7 @@ import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'app/app.dart';
 import 'core/config/server_config.dart';
 import 'core/network/server_status_client.dart';
+import 'features/auth/data/auth_client.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,6 +13,7 @@ Future<void> main() async {
   runApp(
     OpenQspApp(
       serverStatusClient: InternetServerStatusClient(baseUri: config.baseUri),
+      authClient: InternetAuthClient(baseUri: config.baseUri),
     ),
   );
 }
