@@ -27,80 +27,98 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: LayoutBuilder(
-          builder: (context, viewportConstraints) => SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: 640,
-                  minHeight: viewportConstraints.maxHeight - 64,
-                ),
-                child: IntrinsicHeight(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      LayoutBuilder(
-                        builder: (context, constraints) {
-                          final title = Text(
-                            'OpenQSP',
-                            style: Theme.of(context).textTheme.headlineMedium
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          );
-                          final headerActions = _HeaderActions(
-                            callsign: callsign,
-                            onEdit: onEditCallsign,
-                            fillAvailableWidth: constraints.maxWidth < 480,
-                          );
-
-                          if (constraints.maxWidth < 480) {
-                            return Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                title,
-                                const SizedBox(height: 12),
-                                headerActions,
-                              ],
-                            );
-                          }
-
-                          return Row(
-                            children: [
-                              title,
-                              const Spacer(),
-                              Flexible(child: headerActions),
-                            ],
-                          );
-                        },
-                      ),
-                      const SizedBox(height: 30),
-                      Text(
-                        'Services',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const SizedBox(height: 12),
-                      const _CapabilityTile(
-                        icon: Icons.mail_outline,
-                        title: 'Messages',
-                        subtitle: 'Private messages',
-                      ),
-                      const SizedBox(height: 12),
-                      const _CapabilityTile(
-                        icon: Icons.campaign_outlined,
-                        title: 'Bulletins',
-                        subtitle: 'Community bulletins',
-                      ),
-                      const Spacer(),
-                      const SizedBox(height: 32),
-                      Center(child: _Status(state: serverState)),
-                    ],
+        child: CustomScrollView(
+          slivers: [
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(24, 32, 24, 0),
+              sliver: SliverToBoxAdapter(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 640),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _HomeHeader(
+                          callsign: callsign,
+                          onEditCallsign: onEditCallsign,
+                        ),
+                        const SizedBox(height: 30),
+                        Text(
+                          'Services',
+                          style: Theme.of(context).textTheme.titleMedium,
+                        ),
+                        const SizedBox(height: 12),
+                        const _CapabilityTile(
+                          icon: Icons.mail_outline,
+                          title: 'Messages',
+                          subtitle: 'Private messages',
+                        ),
+                        const SizedBox(height: 12),
+                        const _CapabilityTile(
+                          icon: Icons.campaign_outlined,
+                          title: 'Bulletins',
+                          subtitle: 'Community bulletins',
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
-          ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
+              sliver: SliverFillRemaining(
+                hasScrollBody: false,
+                child: Align(
+                  alignment: Alignment.bottomCenter,
+                  child: _Status(state: serverState),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
+    );
+  }
+}
+
+class _HomeHeader extends StatelessWidget {
+  const _HomeHeader({required this.callsign, required this.onEditCallsign});
+
+  final String callsign;
+  final VoidCallback onEditCallsign;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final title = Text(
+          'OpenQSP',
+          style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        );
+        final headerActions = _HeaderActions(
+          callsign: callsign,
+          onEdit: onEditCallsign,
+          fillAvailableWidth: constraints.maxWidth < 480,
+        );
+
+        if (constraints.maxWidth < 480) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [title, const SizedBox(height: 12), headerActions],
+          );
+        }
+
+        return Row(
+          children: [
+            title,
+            const Spacer(),
+            Flexible(child: headerActions),
+          ],
+        );
+      },
     );
   }
 }
