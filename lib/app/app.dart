@@ -1,14 +1,20 @@
 import 'package:flutter/material.dart';
 
+import '../core/network/server_status_client.dart';
 import '../features/callsign/data/callsign_store.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/onboarding/presentation/callsign_onboarding_screen.dart';
 import 'theme/openqsp_theme.dart';
 
 class OpenQspApp extends StatefulWidget {
-  const OpenQspApp({super.key, this.callsignStore});
+  const OpenQspApp({
+    super.key,
+    this.callsignStore,
+    required this.serverStatusClient,
+  });
 
   final CallsignStore? callsignStore;
+  final ServerStatusClient serverStatusClient;
 
   @override
   State<OpenQspApp> createState() => _OpenQspAppState();
@@ -55,6 +61,7 @@ class _OpenQspAppState extends State<OpenQspApp> {
           ? CallsignOnboardingScreen(onSave: _saveCallsign)
           : HomeScreen(
               callsign: _callsign!,
+              statusClient: widget.serverStatusClient,
               onEditCallsign: () async {
                 await _navigatorKey.currentState!.push<void>(
                   MaterialPageRoute(

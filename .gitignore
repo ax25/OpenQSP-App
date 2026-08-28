@@ -33,6 +33,9 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Local environment overrides may contain secrets in future environments.
+.env.local
+
 # Symbolication related
 app.*.symbols
 
