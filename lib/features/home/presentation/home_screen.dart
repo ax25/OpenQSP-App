@@ -27,87 +27,110 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 640),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final title = Text(
-                        'OpenQSP',
-                        style: Theme.of(context).textTheme.headlineMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      );
-                      final callsignAction = _CallsignAction(
-                        callsign: callsign,
-                        onEdit: onEditCallsign,
-                        fillAvailableWidth: constraints.maxWidth < 360,
-                      );
+        child: LayoutBuilder(
+          builder: (context, viewportConstraints) => SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: 640,
+                  minHeight: viewportConstraints.maxHeight - 64,
+                ),
+                child: IntrinsicHeight(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      LayoutBuilder(
+                        builder: (context, constraints) {
+                          final title = Text(
+                            'OpenQSP',
+                            style: Theme.of(context).textTheme.headlineMedium
+                                ?.copyWith(fontWeight: FontWeight.w700),
+                          );
+                          final headerActions = _HeaderActions(
+                            callsign: callsign,
+                            onEdit: onEditCallsign,
+                            fillAvailableWidth: constraints.maxWidth < 480,
+                          );
 
-                      if (constraints.maxWidth < 360) {
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            title,
-                            const SizedBox(height: 8),
-                            callsignAction,
-                          ],
-                        );
-                      }
+                          if (constraints.maxWidth < 480) {
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                title,
+                                const SizedBox(height: 12),
+                                headerActions,
+                              ],
+                            );
+                          }
 
-                      return Row(
-                        children: [
-                          title,
-                          const Spacer(),
-                          Flexible(child: callsignAction),
-                        ],
-                      );
-                    },
+                          return Row(
+                            children: [
+                              title,
+                              const Spacer(),
+                              Flexible(child: headerActions),
+                            ],
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 30),
+                      Text(
+                        'Services',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 12),
+                      const _CapabilityTile(
+                        icon: Icons.mail_outline,
+                        title: 'Messages',
+                        subtitle: 'Private messages',
+                      ),
+                      const SizedBox(height: 12),
+                      const _CapabilityTile(
+                        icon: Icons.campaign_outlined,
+                        title: 'Bulletins',
+                        subtitle: 'Community bulletins',
+                      ),
+                      const Spacer(),
+                      const SizedBox(height: 32),
+                      Center(child: _Status(state: serverState)),
+                    ],
                   ),
-                  const SizedBox(height: 36),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: PopupMenuButton<String>(
-                      key: const Key('transportSelector'),
-                      initialValue: 'Internet',
-                      tooltip: 'Select transport',
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'Internet', child: Text('Internet')),
-                        PopupMenuItem(enabled: false, child: Text('APRS')),
-                        PopupMenuItem(enabled: false, child: Text('Winlink')),
-                      ],
-                      child: const _TransportButton(),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  _Status(state: serverState),
-                  const SizedBox(height: 42),
-                  Text(
-                    'Services',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 12),
-                  const _CapabilityTile(
-                    icon: Icons.mail_outline,
-                    title: 'Messages',
-                    subtitle: 'Private messages',
-                  ),
-                  const SizedBox(height: 12),
-                  const _CapabilityTile(
-                    icon: Icons.campaign_outlined,
-                    title: 'Bulletins',
-                    subtitle: 'Community bulletins',
-                  ),
-                ],
+                ),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+class _HeaderActions extends StatelessWidget {
+  const _HeaderActions({
+    required this.callsign,
+    required this.onEdit,
+    required this.fillAvailableWidth,
+  });
+
+  final String callsign;
+  final VoidCallback onEdit;
+  final bool fillAvailableWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: fillAvailableWidth
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.end,
+      children: [
+        _CallsignAction(
+          callsign: callsign,
+          onEdit: onEdit,
+          fillAvailableWidth: fillAvailableWidth,
+        ),
+        const SizedBox(height: 2),
+        const _TransportSelector(),
+      ],
     );
   }
 }
@@ -158,27 +181,44 @@ class _CallsignText extends StatelessWidget {
   );
 }
 
-class _TransportButton extends StatelessWidget {
-  const _TransportButton();
+class _TransportSelector extends StatelessWidget {
+  const _TransportSelector();
+
   @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-    decoration: BoxDecoration(
-      color: OpenQspColors.surface,
-      border: Border.all(color: OpenQspColors.border),
-      borderRadius: BorderRadius.circular(8),
-    ),
-    child: const Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(Icons.public, size: 20, color: OpenQspColors.brand),
-        SizedBox(width: 10),
-        Text('Internet'),
-        SizedBox(width: 16),
-        Icon(Icons.arrow_drop_down),
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      key: const Key('transportSelector'),
+      initialValue: 'Internet',
+      padding: EdgeInsets.zero,
+      tooltip: 'Select transport',
+      itemBuilder: (_) => const [
+        PopupMenuItem(value: 'Internet', child: Text('Internet')),
+        PopupMenuItem(enabled: false, child: Text('APRS')),
+        PopupMenuItem(enabled: false, child: Text('Winlink')),
       ],
-    ),
-  );
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Internet',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: OpenQspColors.secondaryText,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 2),
+            const Icon(
+              Icons.arrow_drop_down,
+              size: 18,
+              color: OpenQspColors.secondaryText,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _Status extends StatelessWidget {
@@ -188,6 +228,7 @@ class _Status extends StatelessWidget {
   Widget build(BuildContext context) {
     final positive = state != ServerConnectionState.unavailable;
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
           positive ? Icons.circle : Icons.circle_outlined,
@@ -197,17 +238,15 @@ class _Status extends StatelessWidget {
               : OpenQspColors.secondaryText,
         ),
         const SizedBox(width: 9),
-        Expanded(
-          child: Text(
-            state.label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-              color: positive
-                  ? OpenQspColors.positive
-                  : OpenQspColors.secondaryText,
-              fontWeight: FontWeight.w600,
-            ),
+        Text(
+          state.label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: positive
+                ? OpenQspColors.positive
+                : OpenQspColors.secondaryText,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ],
