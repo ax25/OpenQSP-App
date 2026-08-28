@@ -68,6 +68,27 @@ void main() {
     expect(controller.historyFor('N0CALL'), hasLength(1));
   });
 
+  test('send rejects blank and oversized messages', () async {
+    await controller.start();
+    await controller.send('N0CALL', '   ');
+    expect(repository.lastSentText, isNull);
+
+    await expectLater(
+      controller.send(
+        'N0CALL',
+        List.filled(maximumMessageLength + 1, 'x').join(),
+      ),
+      throwsArgumentError,
+    );
+    expect(repository.lastSentText, isNull);
+
+    await controller.send(
+      'N0CALL',
+      List.filled(maximumMessageLength, 'x').join(),
+    );
+    expect(repository.lastSentText, hasLength(maximumMessageLength));
+  });
+
   test('connected after reconnect performs incremental sync with cursor', () async {
     await controller.start();
     repository.syncItems.add(

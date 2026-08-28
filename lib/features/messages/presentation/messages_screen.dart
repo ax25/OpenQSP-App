@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../application/messages_controller.dart';
 import '../domain/message_models.dart';
 import 'conversation_screen.dart';
+import 'message_date_format.dart';
 
 class MessagesScreen extends StatefulWidget {
   const MessagesScreen({super.key, required this.controller});
@@ -133,14 +134,19 @@ class _MessagesScreenState extends State<MessagesScreen> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-          trailing: item.unreadCount > 0
-              ? Badge(label: Text('${item.unreadCount}'))
-              : Text(_time(item.latestMessage.createdAt)),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(formatConversationTimestamp(item.latestMessage.createdAt)),
+              if (item.unreadCount > 0) ...[
+                const SizedBox(width: 8),
+                Badge(label: Text('${item.unreadCount}')),
+              ],
+            ],
+          ),
           onTap: () => _open(item.remoteCallsign),
         );
       },
     );
   }
-
-  String _time(DateTime value) => '${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
 }
