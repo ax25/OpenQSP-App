@@ -18,7 +18,7 @@ class InternetMessagesRealtimeClient implements MessagesRealtimeClient {
       Duration(seconds: 5),
       Duration(seconds: 10),
     ],
-  }) : assert(reconnectDelays.length > 0),
+  }) : assert(reconnectDelays.isNotEmpty),
        _wsUri = baseUri.replace(
          scheme: baseUri.scheme == 'https' ? 'wss' : 'ws',
          path: '/api/v1/ws',
