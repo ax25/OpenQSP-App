@@ -12,9 +12,9 @@ void main() {
     tester,
   ) async {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day, 10, 21);
-    final yesterday = today.subtract(const Duration(days: 1));
-    final older = today.subtract(const Duration(days: 3));
+    final today = DateTime(now.year, now.month, now.day, 10, 22);
+    final yesterday = DateTime(now.year, now.month, now.day - 1, 10, 21);
+    final older = DateTime(now.year, now.month, now.day - 3, 9, 20);
     final repository = _Repository([
       _message('old', older, from: 'N0CALL'),
       _message('yesterday', yesterday, from: 'EA3GNU'),
@@ -43,6 +43,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.text('10:21'), findsOneWidget);
+    expect(find.text('10:22'), findsOneWidget);
     expect(find.text('10:23'), findsOneWidget);
     expect(
       tester.widget<Align>(find.byKey(const Key('message-today-1'))).alignment,
