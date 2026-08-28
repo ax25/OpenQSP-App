@@ -95,7 +95,9 @@ class InternetMessagesRepository implements MessagesRepository {
         .timeout(timeout);
     final body = _decode(response);
     final nextCursor = body['cursor'];
-    if (nextCursor is! String) throw const FormatException('Missing sync cursor');
+    if (nextCursor is! String) {
+      throw const FormatException('Missing sync cursor');
+    }
     return SyncBatch(
       messages: _parseMessages(body['messages']),
       cursor: nextCursor,
