@@ -105,7 +105,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   Widget _body(MessagesController controller) {
-    if (controller.loading && controller.conversations.isEmpty) return const Center(child: CircularProgressIndicator());
+    if (controller.loading && controller.conversations.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
     if (controller.error != null && controller.conversations.isEmpty) {
       return Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -115,7 +117,9 @@ class _MessagesScreenState extends State<MessagesScreen> {
         ]),
       );
     }
-    if (controller.conversations.isEmpty) return const Center(child: Text('No conversations yet'));
+    if (controller.conversations.isEmpty) {
+      return const Center(child: Text('No conversations yet'));
+    }
     return ListView.separated(
       itemCount: controller.conversations.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
