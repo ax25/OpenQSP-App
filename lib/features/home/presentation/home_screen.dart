@@ -197,6 +197,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             token: widget.authSession.tokenFor(widget.callsign)!,
             repository: widget.messagesRepository,
             realtime: widget.messagesRealtimeFactory(),
+            onAuthenticationRequired: () =>
+                widget.authSession.invalidate(widget.callsign),
           ),
         ),
       ),

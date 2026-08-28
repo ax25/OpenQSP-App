@@ -51,33 +51,6 @@ class _ConversationScreenState extends State<ConversationScreen> {
     }
   }
 
-  Future<bool> _confirm(String title, String body) async => await showDialog<bool>(
-    context: context,
-    builder: (context) => AlertDialog(title: Text(title), content: Text(body), actions: [
-      TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-      FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Delete')),
-    ]),
-  ) ?? false;
-
-  Future<void> _deleteConversation() async {
-    if (!await _confirm('Delete conversation?', 'This removes the complete conversation with ${widget.remoteCallsign}.')) return;
-    try {
-      await widget.controller.deleteConversation(widget.remoteCallsign);
-      if (mounted) Navigator.pop(context);
-    } on Object catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Conversation could not be deleted: $error')));
-    }
-  }
-
-  Future<void> _deleteMessage(InternetMessage message) async {
-    if (!await _confirm('Delete message?', 'This action cannot be undone.')) return;
-    try {
-      await widget.controller.deleteMessage(widget.remoteCallsign, message.id);
-    } on Object catch (error) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Message could not be deleted: $error')));
-    }
-  }
-
   @override
   void dispose() {
     widget.controller.removeListener(_changed);
@@ -89,7 +62,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
   Widget build(BuildContext context) {
     final messages = widget.controller.historyFor(widget.remoteCallsign);
     return Scaffold(
-      appBar: AppBar(title: Text(widget.remoteCallsign), actions: [IconButton(key: const Key('deleteConversation'), onPressed: _deleteConversation, tooltip: 'Delete conversation', icon: const Icon(Icons.delete_outline))]),
+      // The server contract currently exposes no delete operation. Do not show
+      // destructive controls until that capability exists server-side.
+      appBar: AppBar(title: Text(widget.remoteCallsign)),
       body: Column(children: [
         if (_error != null) MaterialBanner(content: Text(_error!), actions: [TextButton(onPressed: _load, child: const Text('Retry'))]),
         Expanded(
@@ -98,16 +73,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
             itemCount: messages.length,
             itemBuilder: (_, index) {
               final message = messages[index];
-              final sent = message.direction == MessageDirection.sent;
+              final sent =
+                  message.directionFor(widget.controller.callsign) ==
+                  MessageDirection.sent;
               return Align(
                 alignment: sent ? Alignment.centerRight : Alignment.centerLeft,
-                child: GestureDetector(
-                  onLongPress: message.canDelete ? () => _deleteMessage(message) : null,
-                  child: Card(
+                child: Card(
                     color: sent ? Theme.of(context).colorScheme.primaryContainer : Theme.of(context).colorScheme.surfaceContainerHighest,
-                    child: Padding(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), child: Text(message.text)),
+                    child: Padding(padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10), child: Text(message.body)),
                   ),
-                ),
               );
             },
           ),

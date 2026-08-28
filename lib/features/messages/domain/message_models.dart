@@ -3,44 +3,75 @@ enum MessageDirection { sent, received }
 class InternetMessage {
   const InternetMessage({
     required this.id,
-    required this.remoteCallsign,
-    required this.text,
-    required this.direction,
-    this.sentAt,
-    this.canDelete = false,
+    required this.from,
+    required this.to,
+    required this.body,
+    required this.createdAt,
   });
 
   final String id;
-  final String remoteCallsign;
-  final String text;
-  final MessageDirection direction;
-  final DateTime? sentAt;
-  final bool canDelete;
+  final String from;
+  final String to;
+  final String body;
+  final DateTime createdAt;
+
+  String peerFor(String localCallsign) =>
+      from.toUpperCase() == localCallsign.toUpperCase() ? to : from;
+
+  MessageDirection directionFor(String localCallsign) =>
+      from.toUpperCase() == localCallsign.toUpperCase()
+      ? MessageDirection.sent
+      : MessageDirection.received;
+
+  factory InternetMessage.fromJson(Map<String, dynamic> json) {
+    final id = json['id'];
+    final from = json['from'];
+    final to = json['to'];
+    final body = json['body'];
+    final createdAt = json['created_at'];
+    if (id is! String ||
+        id.isEmpty ||
+        from is! String ||
+        to is! String ||
+        body is! String ||
+        createdAt is! String) {
+      throw const FormatException('Invalid message payload');
+    }
+    return InternetMessage(
+      id: id,
+      from: from.toUpperCase(),
+      to: to.toUpperCase(),
+      body: body,
+      createdAt: DateTime.parse(createdAt).toUtc(),
+    );
+  }
 }
 
 class ConversationSummary {
   const ConversationSummary({
     required this.remoteCallsign,
-    this.latestMessage,
-    this.latestActivity,
+    required this.latestMessage,
     this.unreadCount = 0,
   });
 
   final String remoteCallsign;
-  final String? latestMessage;
-  final DateTime? latestActivity;
+  final InternetMessage latestMessage;
   final int unreadCount;
 
   ConversationSummary copyWith({
-    String? latestMessage,
-    DateTime? latestActivity,
+    InternetMessage? latestMessage,
     int? unreadCount,
   }) => ConversationSummary(
     remoteCallsign: remoteCallsign,
     latestMessage: latestMessage ?? this.latestMessage,
-    latestActivity: latestActivity ?? this.latestActivity,
     unreadCount: unreadCount ?? this.unreadCount,
   );
+}
+
+class SyncBatch {
+  const SyncBatch({required this.messages, required this.cursor});
+  final List<InternetMessage> messages;
+  final String cursor;
 }
 
 sealed class MessagingEvent {
@@ -52,15 +83,10 @@ class MessageReceived extends MessagingEvent {
   final InternetMessage message;
 }
 
-class MessageRemoved extends MessagingEvent {
-  const MessageRemoved(this.remoteCallsign, this.messageId);
-  final String remoteCallsign;
-  final String messageId;
+enum RealtimeConnectionState {
+  connecting,
+  connected,
+  reconnecting,
+  disconnected,
+  authenticationRequired,
 }
-
-class ConversationRemoved extends MessagingEvent {
-  const ConversationRemoved(this.remoteCallsign);
-  final String remoteCallsign;
-}
-
-enum RealtimeConnectionState { connecting, connected, reconnecting, disconnected }

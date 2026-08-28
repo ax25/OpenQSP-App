@@ -7,6 +7,8 @@ import 'package:openqsp_app/core/network/server_status_client.dart';
 import 'package:openqsp_app/features/auth/data/auth_client.dart';
 import 'package:openqsp_app/features/auth/data/auth_token_store.dart';
 import 'package:openqsp_app/features/callsign/data/callsign_store.dart';
+import 'package:openqsp_app/features/messages/data/messages_transport.dart';
+import 'package:openqsp_app/features/messages/domain/message_models.dart';
 
 class FakeCallsignStore implements CallsignStore {
   FakeCallsignStore([this.value]);
@@ -91,6 +93,8 @@ void main() {
         serverStatusClient: statusClient ?? FakeServerStatusClient(),
         authClient: authClient ?? FakeAuthClient(),
         authTokenStore: tokenStore ?? FakeAuthTokenStore(),
+        messagesRepository: FakeMessagesRepository(),
+        messagesRealtimeFactory: FakeMessagesRealtime.new,
       ),
     );
     if (settle) {
@@ -233,7 +237,7 @@ void main() {
       await tester.tap(find.byKey(const Key('connectButton')));
       await tester.pumpAndSettle();
       expect(tokens.tokens['EA3GNU'], 'new-token');
-      expect(find.text('Unable to load conversations'), findsOneWidget);
+      expect(find.text('No conversations yet'), findsOneWidget);
       await tester.pageBack();
       await tester.pumpAndSettle();
       expect(find.text('Connected to server'), findsOneWidget);
@@ -270,7 +274,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('connectButton')));
       await tester.pumpAndSettle();
-      expect(find.text('Unable to load conversations'), findsOneWidget);
+      expect(find.text('No conversations yet'), findsOneWidget);
     },
   );
 
@@ -288,7 +292,7 @@ void main() {
       await tester.tap(find.byKey(const Key('messagesTile')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('serverPasswordField')), findsNothing);
-      expect(find.text('Unable to load conversations'), findsOneWidget);
+      expect(find.text('No conversations yet'), findsOneWidget);
       await tester.pageBack();
       await tester.pumpAndSettle();
       auth.validationResult = AuthValidationResult.invalid;
@@ -372,4 +376,37 @@ void main() {
       const TextSelection.collapsed(offset: 3),
     );
   });
+}
+
+class FakeMessagesRepository implements MessagesRepository {
+  @override
+  Future<List<InternetMessage>> messages({
+    required String callsign,
+    required String token,
+    String? withCallsign,
+  }) async => [];
+
+  @override
+  Future<InternetMessage> send({
+    required String callsign,
+    required String remoteCallsign,
+    required String text,
+    required String token,
+  }) => throw UnimplementedError();
+
+  @override
+  Future<SyncBatch> sync({required String token, String? cursor}) async =>
+      const SyncBatch(messages: [], cursor: 'initial');
+}
+
+class FakeMessagesRealtime implements MessagesRealtimeClient {
+  @override
+  Stream<RealtimeConnectionState> get connectionStates =>
+      Stream.value(RealtimeConnectionState.connected);
+  @override
+  Stream<MessagingEvent> get events => const Stream.empty();
+  @override
+  Future<void> connect({required String callsign, required String token}) async {}
+  @override
+  Future<void> close() async {}
 }

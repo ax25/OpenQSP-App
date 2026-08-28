@@ -11,36 +11,41 @@ class MessagesController extends ChangeNotifier {
     required this.token,
     required this.repository,
     required this.realtime,
+    this.onAuthenticationRequired,
   });
 
   final String callsign;
   final String token;
   final MessagesRepository repository;
   final MessagesRealtimeClient realtime;
+  final Future<void> Function()? onAuthenticationRequired;
   final List<ConversationSummary> conversations = [];
-  final Map<String, List<InternetMessage>> _history = {};
+  final Map<String, InternetMessage> _messagesById = {};
+  final Map<String, int> _unreadByPeer = {};
   StreamSubscription<MessagingEvent>? _events;
   StreamSubscription<RealtimeConnectionState>? _connections;
+  String? _syncCursor;
+  bool _hasConnected = false;
   bool loading = false;
   String? error;
   String? openRemoteCallsign;
   RealtimeConnectionState connectionState = RealtimeConnectionState.connecting;
 
-  List<InternetMessage> historyFor(String remote) =>
-      List.unmodifiable(_history[_key(remote)] ?? const []);
+  List<InternetMessage> historyFor(String remote) {
+    final peer = _key(remote);
+    final result = _messagesById.values
+        .where((message) => _key(message.peerFor(callsign)) == peer)
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return List.unmodifiable(result);
+  }
 
   Future<void> start() async {
     _events ??= realtime.events.listen(_applyEvent, onError: (_) {
       connectionState = RealtimeConnectionState.disconnected;
       notifyListeners();
     });
-    _connections ??= realtime.connectionStates.listen((state) {
-      connectionState = state;
-      notifyListeners();
-      if (state == RealtimeConnectionState.connected) {
-        unawaited(loadConversations());
-      }
-    });
+    _connections ??= realtime.connectionStates.listen(_connectionChanged);
     try {
       await realtime.connect(callsign: callsign, token: token);
     } on Object {
@@ -49,19 +54,35 @@ class MessagesController extends ChangeNotifier {
     await loadConversations();
   }
 
+  void _connectionChanged(RealtimeConnectionState state) {
+    connectionState = state;
+    notifyListeners();
+    if (state == RealtimeConnectionState.authenticationRequired) {
+      final callback = onAuthenticationRequired;
+      if (callback != null) unawaited(callback());
+      return;
+    }
+    if (state != RealtimeConnectionState.connected) return;
+    if (_hasConnected) {
+      unawaited(reconcile());
+    } else {
+      _hasConnected = true;
+    }
+  }
+
   Future<void> loadConversations() async {
     loading = true;
     error = null;
     notifyListeners();
     try {
-      final loaded = await repository.conversations(
+      final loaded = await repository.messages(
         callsign: callsign,
         token: token,
       );
-      conversations
-        ..clear()
-        ..addAll(loaded);
-      _sortConversations();
+      _mergeAll(loaded);
+      final initialSync = await repository.sync(token: token);
+      _syncCursor = initialSync.cursor;
+      _mergeAll(initialSync.messages);
     } on Object catch (value) {
       error = value.toString();
     } finally {
@@ -70,23 +91,32 @@ class MessagesController extends ChangeNotifier {
     }
   }
 
+  Future<void> reconcile() async {
+    try {
+      final batch = await repository.sync(token: token, cursor: _syncCursor);
+      _syncCursor = batch.cursor;
+      _mergeAll(batch.messages);
+      error = null;
+      notifyListeners();
+    } on Object catch (value) {
+      error = value.toString();
+      notifyListeners();
+    }
+  }
+
   Future<void> openConversation(String remote) async {
     final normalized = _key(remote);
     openRemoteCallsign = normalized;
+    _unreadByPeer[normalized] = 0;
     notifyListeners();
-    final loaded = await repository.history(
+    final loaded = await repository.messages(
       callsign: callsign,
-      remoteCallsign: normalized,
       token: token,
+      withCallsign: normalized,
     );
-    _history[normalized] = [];
-    for (final message in loaded) {
-      _mergeMessage(message);
-    }
-    final index = _conversationIndex(normalized);
-    if (index >= 0) {
-      conversations[index] = conversations[index].copyWith(unreadCount: 0);
-    }
+    _mergeAll(loaded);
+    _unreadByPeer[normalized] = 0;
+    _rebuildConversations();
     notifyListeners();
   }
 
@@ -101,96 +131,70 @@ class MessagesController extends ChangeNotifier {
       text: trimmed,
       token: token,
     );
-    _mergeMessage(message);
-    notifyListeners();
-  }
-
-  Future<void> deleteMessage(String remote, String id) async {
-    await repository.deleteMessage(
-      callsign: callsign,
-      remoteCallsign: _key(remote),
-      messageId: id,
-      token: token,
-    );
-    _removeMessage(_key(remote), id);
-    notifyListeners();
-  }
-
-  Future<void> deleteConversation(String remote) async {
-    await repository.deleteConversation(
-      callsign: callsign,
-      remoteCallsign: _key(remote),
-      token: token,
-    );
-    _removeConversation(_key(remote));
+    _merge(message);
     notifyListeners();
   }
 
   void _applyEvent(MessagingEvent event) {
     switch (event) {
       case MessageReceived(:final message):
-        _mergeMessage(message, live: true);
-      case MessageRemoved(:final remoteCallsign, :final messageId):
-        _removeMessage(_key(remoteCallsign), messageId);
-      case ConversationRemoved(:final remoteCallsign):
-        _removeConversation(_key(remoteCallsign));
+        final isNew = !_messagesById.containsKey(message.id);
+        final peer = _key(message.peerFor(callsign));
+        if (isNew &&
+            message.directionFor(callsign) == MessageDirection.received &&
+            openRemoteCallsign != peer) {
+          _unreadByPeer[peer] = (_unreadByPeer[peer] ?? 0) + 1;
+        }
+        _merge(message);
     }
     notifyListeners();
   }
 
-  void _mergeMessage(InternetMessage message, {bool live = false}) {
-    final remote = _key(message.remoteCallsign);
-    final messages = _history.putIfAbsent(remote, () => []);
-    if (!messages.any((existing) => existing.id == message.id)) {
-      messages.add(message);
-      messages.sort(
-        (a, b) => (a.sentAt ?? DateTime.fromMillisecondsSinceEpoch(0))
-            .compareTo(b.sentAt ?? DateTime.fromMillisecondsSinceEpoch(0)),
+  void _mergeAll(Iterable<InternetMessage> messages) {
+    for (final message in messages) {
+      _messagesById[message.id] = message;
+    }
+    _rebuildConversations();
+  }
+
+  void _merge(InternetMessage message) {
+    _messagesById[message.id] = message;
+    _rebuildConversations();
+  }
+
+  void _rebuildConversations() {
+    final latestByPeer = <String, InternetMessage>{};
+    for (final message in _messagesById.values) {
+      final peer = _key(message.peerFor(callsign));
+      final previous = latestByPeer[peer];
+      if (previous == null || message.createdAt.isAfter(previous.createdAt)) {
+        latestByPeer[peer] = message;
+      }
+    }
+    conversations
+      ..clear()
+      ..addAll(
+        latestByPeer.entries.map(
+          (entry) => ConversationSummary(
+            remoteCallsign: entry.key,
+            latestMessage: entry.value,
+            unreadCount: _unreadByPeer[entry.key] ?? 0,
+          ),
+        ),
+      )
+      ..sort(
+        (a, b) => b.latestMessage.createdAt.compareTo(
+          a.latestMessage.createdAt,
+        ),
       );
-    }
-    final index = _conversationIndex(remote);
-    final unread =
-        live &&
-        message.direction == MessageDirection.received &&
-        openRemoteCallsign != remote;
-    final summary = ConversationSummary(
-      remoteCallsign: remote,
-      latestMessage: message.text,
-      latestActivity: message.sentAt,
-      unreadCount:
-          (index < 0 ? 0 : conversations[index].unreadCount) +
-          (unread ? 1 : 0),
-    );
-    if (index < 0) {
-      conversations.add(summary);
-    } else {
-      conversations[index] = summary;
-    }
-    _sortConversations();
   }
 
-  void _removeMessage(String remote, String id) {
-    _history[remote]?.removeWhere((message) => message.id == id);
-  }
-
-  void _removeConversation(String remote) {
-    conversations.removeWhere((item) => _key(item.remoteCallsign) == remote);
-    _history.remove(remote);
-  }
-
-  int _conversationIndex(String remote) => conversations.indexWhere(
-    (item) => _key(item.remoteCallsign) == remote,
-  );
   String _key(String value) => value.trim().toUpperCase();
-  void _sortConversations() => conversations.sort(
-    (a, b) => (b.latestActivity ?? DateTime.fromMillisecondsSinceEpoch(0))
-        .compareTo(a.latestActivity ?? DateTime.fromMillisecondsSinceEpoch(0)),
-  );
 
   @override
   void dispose() {
-    _events?.cancel();
-    _connections?.cancel();
+    unawaited(_events?.cancel());
+    unawaited(_connections?.cancel());
     unawaited(realtime.close());
     super.dispose();
   }

@@ -44,6 +44,11 @@ class AuthSession {
     return result;
   }
 
+  Future<void> invalidate(String callsign) async {
+    _clearActive(callsign);
+    await tokenStore.delete(callsign);
+  }
+
   void _setActive(String callsign, String token) {
     _activeCallsign = _normalize(callsign);
     _activeToken = token;

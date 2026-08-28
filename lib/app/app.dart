@@ -17,8 +17,8 @@ class OpenQspApp extends StatefulWidget {
     required this.serverStatusClient,
     required this.authClient,
     this.authTokenStore,
-    this.messagesRepository = const UnsupportedMessagesRepository(),
-    this.messagesRealtimeFactory = _unsupportedRealtime,
+    required this.messagesRepository,
+    required this.messagesRealtimeFactory,
   });
 
   final CallsignStore? callsignStore;
@@ -108,6 +108,3 @@ class _OpenQspAppState extends State<OpenQspApp> {
     );
   }
 }
-
-MessagesRealtimeClient _unsupportedRealtime() =>
-    const UnsupportedMessagesRealtimeClient();

@@ -80,9 +80,22 @@ class _MessagesScreenState extends State<MessagesScreen> {
       ),
       body: Column(
         children: [
-          if (controller.connectionState == RealtimeConnectionState.reconnecting || controller.connectionState == RealtimeConnectionState.disconnected)
+          if (controller.connectionState ==
+                  RealtimeConnectionState.reconnecting ||
+              controller.connectionState ==
+                  RealtimeConnectionState.disconnected ||
+              controller.connectionState ==
+                  RealtimeConnectionState.authenticationRequired)
             MaterialBanner(
-              content: Text(controller.connectionState == RealtimeConnectionState.reconnecting ? 'Real-time connection reconnecting…' : 'Real-time connection unavailable'),
+              content: Text(
+                controller.connectionState ==
+                        RealtimeConnectionState.authenticationRequired
+                    ? 'Authentication expired. Return and connect again.'
+                    : controller.connectionState ==
+                          RealtimeConnectionState.reconnecting
+                    ? 'Real-time connection reconnecting…'
+                    : 'Real-time connection unavailable',
+              ),
               actions: const [SizedBox.shrink()],
             ),
           Expanded(child: _body(controller)),
@@ -111,8 +124,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
         return ListTile(
           key: Key('conversation-${item.remoteCallsign}'),
           title: Text(item.remoteCallsign),
-          subtitle: item.latestMessage == null ? null : Text(item.latestMessage!, maxLines: 1, overflow: TextOverflow.ellipsis),
-          trailing: item.unreadCount > 0 ? Badge(label: Text('${item.unreadCount}')) : item.latestActivity == null ? null : Text(_time(item.latestActivity!)),
+          subtitle: Text(
+            item.latestMessage.body,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          trailing: item.unreadCount > 0
+              ? Badge(label: Text('${item.unreadCount}'))
+              : Text(_time(item.latestMessage.createdAt)),
           onTap: () => _open(item.remoteCallsign),
         );
       },

@@ -23,18 +23,24 @@ void main() {
 
   tearDown(() => controller.dispose());
 
-  test('loads conversations and makes one authenticated realtime connection', () async {
-    repository.summaries.add(const ConversationSummary(remoteCallsign: 'N0CALL', latestMessage: 'hello'));
+  test('groups peers and sorts conversations by latest message', () async {
+    repository.items.addAll([
+      message('1', from: 'EA3GNU', to: 'N0CALL', day: 1),
+      message('2', from: 'W1AW', to: 'EA3GNU', day: 3),
+      message('3', from: 'N0CALL', to: 'EA3GNU', day: 2),
+    ]);
     await controller.start();
-    expect(controller.conversations.single.remoteCallsign, 'N0CALL');
-    expect(realtime.connectedCallsign, 'EA3GNU');
+    expect(
+      controller.conversations.map((item) => item.remoteCallsign),
+      ['W1AW', 'N0CALL'],
+    );
     expect(realtime.connectedToken, 'scoped-token');
   });
 
-  test('loads chronological history and deduplicates HTTP and realtime message', () async {
-    final newer = message('2', DateTime.utc(2026, 1, 2));
-    final older = message('1', DateTime.utc(2026, 1, 1));
-    repository.messages.addAll([newer, older]);
+  test('history is chronological and HTTP plus websocket is deduplicated', () async {
+    final newer = message('2', from: 'EA3GNU', to: 'N0CALL', day: 2);
+    final older = message('1', from: 'N0CALL', to: 'EA3GNU', day: 1);
+    repository.items.addAll([newer, older]);
     await controller.start();
     await controller.openConversation('n0call');
     realtime.emit(MessageReceived(newer));
@@ -42,75 +48,118 @@ void main() {
     expect(controller.historyFor('N0CALL').map((item) => item.id), ['1', '2']);
   });
 
-  test('incoming message creates and updates unread conversation', () async {
+  test('incoming peer creates conversation and local unread is cleared on open', () async {
     await controller.start();
-    realtime.emit(MessageReceived(message('1', DateTime.utc(2026), direction: MessageDirection.received)));
+    realtime.emit(
+      MessageReceived(message('1', from: 'N0CALL', to: 'EA3GNU', day: 1)),
+    );
     await Future<void>.delayed(Duration.zero);
-    expect(controller.conversations.single.latestMessage, 'message 1');
     expect(controller.conversations.single.unreadCount, 1);
+    await controller.openConversation('N0CALL');
+    expect(controller.conversations.single.unreadCount, 0);
   });
 
-  test('send, message deletion and conversation deletion update state', () async {
+  test('send uses response identity and websocket echo does not duplicate', () async {
     await controller.start();
     await controller.send('N0CALL', ' hello ');
+    realtime.emit(MessageReceived(repository.sent!));
+    await Future<void>.delayed(Duration.zero);
     expect(repository.lastSentText, 'hello');
     expect(controller.historyFor('N0CALL'), hasLength(1));
-    await controller.deleteMessage('N0CALL', 'sent');
-    expect(controller.historyFor('N0CALL'), isEmpty);
-    await controller.deleteConversation('N0CALL');
-    expect(controller.conversations, isEmpty);
   });
 
-  test('HTTP error is recoverable through another load', () async {
-    repository.failure = StateError('offline');
-    await controller.loadConversations();
-    expect(controller.error, contains('offline'));
-    repository.failure = null;
-    await controller.loadConversations();
-    expect(controller.error, isNull);
+  test('connected after reconnect performs incremental sync with cursor', () async {
+    await controller.start();
+    repository.syncItems.add(
+      message('missed', from: 'N0CALL', to: 'EA3GNU', day: 2),
+    );
+    realtime.state(RealtimeConnectionState.reconnecting);
+    realtime.state(RealtimeConnectionState.connected);
+    await Future<void>.delayed(Duration.zero);
+    expect(repository.lastSyncCursor, 'cursor-1');
+    expect(controller.historyFor('N0CALL').single.id, 'missed');
   });
 }
 
-InternetMessage message(String id, DateTime time, {MessageDirection direction = MessageDirection.sent}) => InternetMessage(
+InternetMessage message(
+  String id, {
+  required String from,
+  required String to,
+  required int day,
+}) => InternetMessage(
   id: id,
-  remoteCallsign: 'N0CALL',
-  text: 'message $id',
-  direction: direction,
-  sentAt: time,
-  canDelete: true,
+  from: from,
+  to: to,
+  body: 'message $id',
+  createdAt: DateTime.utc(2026, 1, day),
 );
 
 class FakeRepository implements MessagesRepository {
-  final summaries = <ConversationSummary>[];
-  final messages = <InternetMessage>[];
-  Object? failure;
+  final items = <InternetMessage>[];
+  final syncItems = <InternetMessage>[];
   String? lastSentText;
+  String? lastSyncCursor;
+  InternetMessage? sent;
 
-  void check() { if (failure != null) throw failure!; }
   @override
-  Future<List<ConversationSummary>> conversations({required String callsign, required String token}) async { check(); return List.of(summaries); }
+  Future<List<InternetMessage>> messages({
+    required String callsign,
+    required String token,
+    String? withCallsign,
+  }) async => withCallsign == null
+      ? List.of(items)
+      : items
+            .where(
+              (item) =>
+                  item.peerFor(callsign).toUpperCase() ==
+                  withCallsign.toUpperCase(),
+            )
+            .toList();
+
   @override
-  Future<List<InternetMessage>> history({required String callsign, required String remoteCallsign, required String token}) async => List.of(messages);
+  Future<InternetMessage> send({
+    required String callsign,
+    required String remoteCallsign,
+    required String text,
+    required String token,
+  }) async {
+    lastSentText = text;
+    return sent = message(
+      'sent-id',
+      from: callsign,
+      to: remoteCallsign,
+      day: 3,
+    );
+  }
+
   @override
-  Future<InternetMessage> send({required String callsign, required String remoteCallsign, required String text, required String token}) async { lastSentText = text; return InternetMessage(id: 'sent', remoteCallsign: remoteCallsign, text: text, direction: MessageDirection.sent); }
-  @override
-  Future<void> deleteMessage({required String callsign, required String remoteCallsign, required String messageId, required String token}) async {}
-  @override
-  Future<void> deleteConversation({required String callsign, required String remoteCallsign, required String token}) async {}
+  Future<SyncBatch> sync({required String token, String? cursor}) async {
+    lastSyncCursor = cursor;
+    return SyncBatch(
+      messages: List.of(syncItems),
+      cursor: cursor == null ? 'cursor-1' : 'cursor-2',
+    );
+  }
 }
 
 class FakeRealtime implements MessagesRealtimeClient {
   final eventController = StreamController<MessagingEvent>.broadcast();
   final stateController = StreamController<RealtimeConnectionState>.broadcast();
-  String? connectedCallsign;
   String? connectedToken;
   @override
   Stream<MessagingEvent> get events => eventController.stream;
   @override
   Stream<RealtimeConnectionState> get connectionStates => stateController.stream;
   @override
-  Future<void> connect({required String callsign, required String token}) async { connectedCallsign = callsign; connectedToken = token; }
+  Future<void> connect({required String callsign, required String token}) async {
+    connectedToken = token;
+    stateController.add(RealtimeConnectionState.connected);
+  }
   void emit(MessagingEvent event) => eventController.add(event);
+  void state(RealtimeConnectionState state) => stateController.add(state);
   @override
-  Future<void> close() async { await eventController.close(); await stateController.close(); }
+  Future<void> close() async {
+    await eventController.close();
+    await stateController.close();
+  }
 }
