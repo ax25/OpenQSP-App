@@ -33,6 +33,11 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Environment files may contain credentials in future deployments. The checked-in
+# development file is explicitly unignored below; keep other variants local.
+.env.*
+!.env.example
+
 # Symbolication related
 app.*.symbols
 

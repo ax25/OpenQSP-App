@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/app/app.dart';
+import 'package:openqsp_app/core/network/server_status_client.dart';
 import 'package:openqsp_app/features/callsign/data/callsign_store.dart';
 
 class FakeCallsignStore implements CallsignStore {
@@ -15,13 +18,42 @@ class FakeCallsignStore implements CallsignStore {
   Future<void> write(String callsign) async => value = callsign;
 }
 
+class FakeServerStatusClient implements ServerStatusClient {
+  FakeServerStatusClient({this.result = true, this.pending});
+
+  bool result;
+  Future<bool>? pending;
+  int checks = 0;
+
+  @override
+  Future<bool> isAvailable() {
+    checks++;
+    return pending ?? Future.value(result);
+  }
+
+  @override
+  void close() {}
+}
+
 void main() {
   final callsignField = find.byKey(const Key('callsignField'));
   final continueButton = find.byKey(const Key('continueButton'));
 
-  Future<void> pumpApp(WidgetTester tester, FakeCallsignStore store) async {
-    await tester.pumpWidget(OpenQspApp(callsignStore: store));
-    await tester.pumpAndSettle();
+  Future<void> pumpApp(
+    WidgetTester tester,
+    FakeCallsignStore store, {
+    FakeServerStatusClient? statusClient,
+    bool settle = true,
+  }) async {
+    await tester.pumpWidget(
+      OpenQspApp(
+        callsignStore: store,
+        serverStatusClient: statusClient ?? FakeServerStatusClient(),
+      ),
+    );
+    if (settle) {
+      await tester.pumpAndSettle();
+    }
   }
 
   testWidgets('first launch shows onboarding', (tester) async {
@@ -78,6 +110,48 @@ void main() {
     );
     expect(aprs.enabled, isFalse);
     expect(winlink.enabled, isFalse);
+  });
+
+  testWidgets('Home initially shows checking state', (tester) async {
+    final pending = Completer<bool>();
+    final client = FakeServerStatusClient(
+      pending: pending.future,
+    );
+    await pumpApp(
+      tester,
+      FakeCallsignStore('EA3GNU'),
+      statusClient: client,
+      settle: false,
+    );
+    await tester.pump();
+
+    expect(find.text('Checking server...'), findsOneWidget);
+  });
+
+  testWidgets('Home shows unavailable when status check fails', (tester) async {
+    await pumpApp(
+      tester,
+      FakeCallsignStore('EA3GNU'),
+      statusClient: FakeServerStatusClient(result: false),
+    );
+    expect(find.text('Server unavailable'), findsOneWidget);
+  });
+
+  testWidgets('tapping status retries the check', (tester) async {
+    final client = FakeServerStatusClient(result: false);
+    await pumpApp(
+      tester,
+      FakeCallsignStore('EA3GNU'),
+      statusClient: client,
+    );
+    expect(client.checks, 1);
+
+    client.result = true;
+    await tester.tap(find.byKey(const Key('serverStatusRetry')));
+    await tester.pumpAndSettle();
+
+    expect(client.checks, 2);
+    expect(find.text('Server available'), findsOneWidget);
   });
 
   testWidgets('changing callsign updates storage and Home', (tester) async {
