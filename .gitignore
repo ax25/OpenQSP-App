@@ -33,6 +33,12 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# Environment files may contain credentials in future deployments. Keep local
+# configuration private while retaining the non-secret example template.
+.env
+.env.*
+!.env.example
+
 # Symbolication related
 app.*.symbols
 

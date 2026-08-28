@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/openqsp_theme.dart';
+import '../../../core/network/server_status_client.dart';
 
 enum ServerConnectionState {
+  checking('Checking server...'),
   available('Server available'),
   connected('Connected to server'),
   unavailable('Server unavailable');
@@ -11,17 +13,55 @@ enum ServerConnectionState {
   final String label;
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     required this.callsign,
     required this.onEditCallsign,
-    this.serverState = ServerConnectionState.available,
+    required this.serverStatusClient,
   });
 
   final String callsign;
   final VoidCallback onEditCallsign;
-  final ServerConnectionState serverState;
+  final ServerStatusClient serverStatusClient;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  ServerConnectionState _serverState = ServerConnectionState.checking;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _checkServer();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkServer();
+  }
+
+  Future<void> _checkServer() async {
+    if (_serverState != ServerConnectionState.checking && mounted) {
+      setState(() => _serverState = ServerConnectionState.checking);
+    }
+    final available = await widget.serverStatusClient.isAvailable();
+    if (!mounted) return;
+    setState(
+      () => _serverState = available
+          ? ServerConnectionState.available
+          : ServerConnectionState.unavailable,
+    );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,8 +82,8 @@ class HomeScreen extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           _HomeHeader(
-                            callsign: callsign,
-                            onEditCallsign: onEditCallsign,
+                            callsign: widget.callsign,
+                            onEditCallsign: widget.onEditCallsign,
                           ),
                           const SizedBox(height: 30),
                           Text(
@@ -70,7 +110,7 @@ class HomeScreen extends StatelessWidget {
               ),
               Padding(
                 padding: const EdgeInsets.only(top: 8, bottom: 24),
-                child: _Status(state: serverState),
+                child: _Status(state: _serverState, onRetry: _checkServer),
               ),
             ],
           ),
@@ -229,34 +269,43 @@ class _TransportSelector extends StatelessWidget {
 }
 
 class _Status extends StatelessWidget {
-  const _Status({required this.state});
+  const _Status({required this.state, required this.onRetry});
   final ServerConnectionState state;
+  final VoidCallback onRetry;
   @override
   Widget build(BuildContext context) {
-    final positive = state != ServerConnectionState.unavailable;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          positive ? Icons.circle : Icons.circle_outlined,
-          size: 11,
-          color: positive
-              ? OpenQspColors.positive
-              : OpenQspColors.secondaryText,
+    final positive = state == ServerConnectionState.available;
+    return InkWell(
+      key: const Key('serverStatusRetry'),
+      borderRadius: BorderRadius.circular(16),
+      onTap: state == ServerConnectionState.checking ? null : onRetry,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              positive ? Icons.circle : Icons.circle_outlined,
+              size: 11,
+              color: positive
+                  ? OpenQspColors.positive
+                  : OpenQspColors.secondaryText,
+            ),
+            const SizedBox(width: 9),
+            Text(
+              state.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: positive
+                    ? OpenQspColors.positive
+                    : OpenQspColors.secondaryText,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 9),
-        Text(
-          state.label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: positive
-                ? OpenQspColors.positive
-                : OpenQspColors.secondaryText,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
