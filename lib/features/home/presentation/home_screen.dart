@@ -35,29 +35,37 @@ class HomeScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    children: [
-                      Text(
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      final title = Text(
                         'OpenQSP',
                         style: Theme.of(context).textTheme.headlineMedium
                             ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      const Spacer(),
-                      Flexible(
-                        child: Text(
-                          callsign,
-                          key: const Key('homeCallsign'),
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ),
-                      IconButton(
-                        key: const Key('editCallsignButton'),
-                        tooltip: 'Change callsign',
-                        onPressed: onEditCallsign,
-                        icon: const Icon(Icons.edit_outlined),
-                      ),
-                    ],
+                      );
+                      final callsignAction = _CallsignAction(
+                        callsign: callsign,
+                        onEdit: onEditCallsign,
+                      );
+
+                      if (constraints.maxWidth < 360) {
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            title,
+                            const SizedBox(height: 8),
+                            callsignAction,
+                          ],
+                        );
+                      }
+
+                      return Row(
+                        children: [
+                          title,
+                          const Spacer(),
+                          Flexible(child: callsignAction),
+                        ],
+                      );
+                    },
                   ),
                   const SizedBox(height: 36),
                   Align(
@@ -99,6 +107,36 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _CallsignAction extends StatelessWidget {
+  const _CallsignAction({required this.callsign, required this.onEdit});
+
+  final String callsign;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            callsign,
+            key: const Key('homeCallsign'),
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        IconButton(
+          key: const Key('editCallsignButton'),
+          tooltip: 'Change callsign',
+          onPressed: onEdit,
+          icon: const Icon(Icons.edit_outlined),
+        ),
+      ],
     );
   }
 }

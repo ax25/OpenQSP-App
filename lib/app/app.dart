@@ -56,16 +56,19 @@ class _OpenQspAppState extends State<OpenQspApp> {
           : HomeScreen(
               callsign: _callsign!,
               onEditCallsign: () async {
-                final updated = await _navigatorKey.currentState!.push<String>(
+                await _navigatorKey.currentState!.push<void>(
                   MaterialPageRoute(
                     builder: (routeContext) => CallsignOnboardingScreen(
                       initialCallsign: _callsign,
-                      onSave: (value) async =>
-                          Navigator.of(routeContext).pop(value),
+                      onSave: (value) async {
+                        await _saveCallsign(value);
+                        if (routeContext.mounted) {
+                          Navigator.of(routeContext).pop();
+                        }
+                      },
                     ),
                   ),
                 );
-                if (updated != null) await _saveCallsign(updated);
               },
             ),
     );

@@ -52,6 +52,7 @@ class CallsignOnboardingScreen extends StatefulWidget {
 class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
   late final TextEditingController _callsignController;
   late bool _canContinue;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -76,14 +77,20 @@ class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
 
   Future<void> _continue() async {
     final normalizedCallsign = _callsignController.text.trim();
-    if (normalizedCallsign.isEmpty) return;
+    if (normalizedCallsign.isEmpty || _isSaving) return;
+
+    setState(() => _isSaving = true);
 
     _callsignController.value = TextEditingValue(
       text: normalizedCallsign,
       selection: TextSelection.collapsed(offset: normalizedCallsign.length),
     );
     FocusManager.instance.primaryFocus?.unfocus();
-    await widget.onSave(normalizedCallsign);
+    try {
+      await widget.onSave(normalizedCallsign);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -132,7 +139,9 @@ class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
                       const SizedBox(height: 24),
                       ElevatedButton(
                         key: const Key('continueButton'),
-                        onPressed: _canContinue ? _continue : null,
+                        onPressed: _canContinue && !_isSaving
+                            ? _continue
+                            : null,
                         child: const Text('Continue'),
                       ),
                       const SizedBox(height: 24),

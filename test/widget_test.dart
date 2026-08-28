@@ -33,6 +33,7 @@ void main() {
     final store = FakeCallsignStore();
     await pumpApp(tester, store);
     await tester.enterText(callsignField, ' ea3gnu-5 ');
+    await tester.pump();
     await tester.tap(continueButton);
     await tester.pumpAndSettle();
 
@@ -87,6 +88,7 @@ void main() {
 
     expect(tester.widget<TextField>(callsignField).controller?.text, 'EA3GNU');
     await tester.enterText(callsignField, 'n0call');
+    await tester.pump();
     await tester.tap(continueButton);
     await tester.pumpAndSettle();
 
@@ -110,5 +112,34 @@ void main() {
   testWidgets('empty callsign keeps Continue disabled', (tester) async {
     await pumpApp(tester, FakeCallsignStore());
     expect(tester.widget<ElevatedButton>(continueButton).onPressed, isNull);
+  });
+
+  testWidgets('uppercase normalization preserves a middle cursor position', (
+    tester,
+  ) async {
+    await pumpApp(tester, FakeCallsignStore());
+    await tester.showKeyboard(callsignField);
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'ea3gnu',
+        selection: TextSelection.collapsed(offset: 2),
+      ),
+    );
+    await tester.pump();
+
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'eax3gnu',
+        selection: TextSelection.collapsed(offset: 3),
+      ),
+    );
+    await tester.pump();
+
+    final field = tester.widget<TextField>(callsignField);
+    expect(field.controller?.text, 'EAX3GNU');
+    expect(
+      field.controller?.selection,
+      const TextSelection.collapsed(offset: 3),
+    );
   });
 }
