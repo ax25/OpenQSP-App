@@ -49,7 +49,10 @@ class FakeAuthClient implements AuthClient {
   }) async => loginResult;
 
   @override
-  Future<AuthValidationResult> validateToken(String token) async {
+  Future<AuthValidationResult> validateToken({
+    required String token,
+    required String callsign,
+  }) async {
     validations++;
     return validationResult;
   }

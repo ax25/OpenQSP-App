@@ -57,18 +57,38 @@ void main() {
     expect((result as LoginError).failure, LoginFailure.malformedResponse);
   });
 
-  test('token validation maps 200 and 401', () async {
+  test('/me 200 with matching callsign validates token', () async {
     var status = 200;
     final client = InternetAuthClient(
       baseUri: baseUri,
       httpClient: MockClient((request) async {
         expect(request.url.path, '/api/v1/me');
         expect(request.headers['authorization'], 'Bearer abc');
-        return http.Response('{}', status);
+        return http.Response('{"user":{"callsign":" ea3gnu "}}', status);
       }),
     );
-    expect(await client.validateToken('abc'), AuthValidationResult.valid);
+    expect(
+      await client.validateToken(token: 'abc', callsign: 'EA3GNU'),
+      AuthValidationResult.valid,
+    );
     status = 401;
-    expect(await client.validateToken('abc'), AuthValidationResult.invalid);
+    expect(
+      await client.validateToken(token: 'abc', callsign: 'EA3GNU'),
+      AuthValidationResult.invalid,
+    );
+  });
+
+  test('/me 200 with different callsign invalidates token', () async {
+    final client = InternetAuthClient(
+      baseUri: baseUri,
+      httpClient: MockClient(
+        (_) async => http.Response('{"user":{"callsign":"N0CALL"}}', 200),
+      ),
+    );
+
+    expect(
+      await client.validateToken(token: 'abc', callsign: 'EA3GNU'),
+      AuthValidationResult.invalid,
+    );
   });
 }

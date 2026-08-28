@@ -27,7 +27,10 @@ abstract interface class AuthClient {
     required String password,
   });
 
-  Future<AuthValidationResult> validateToken(String token);
+  Future<AuthValidationResult> validateToken({
+    required String token,
+    required String callsign,
+  });
 
   void close();
 }
@@ -85,23 +88,39 @@ class InternetAuthClient implements AuthClient {
   }
 
   @override
-  Future<AuthValidationResult> validateToken(String token) async {
+  Future<AuthValidationResult> validateToken({
+    required String token,
+    required String callsign,
+  }) async {
     try {
       final response = await _httpClient.get(
         _meUri,
         headers: {'Authorization': 'Bearer $token'},
       ).timeout(timeout);
-      return switch (response.statusCode) {
-        200 => AuthValidationResult.valid,
-        401 => AuthValidationResult.invalid,
-        _ => AuthValidationResult.serverError,
+      if (response.statusCode == 401) return AuthValidationResult.invalid;
+      if (response.statusCode != 200) return AuthValidationResult.serverError;
+
+      final body = jsonDecode(response.body);
+      final responseCallsign = switch (body) {
+        {'callsign': final String value} => value,
+        {'user': {'callsign': final String value}} => value,
+        _ => null,
       };
+      if (responseCallsign == null ||
+          _normalizeCallsign(responseCallsign) != _normalizeCallsign(callsign)) {
+        return AuthValidationResult.invalid;
+      }
+      return AuthValidationResult.valid;
     } on TimeoutException {
       return AuthValidationResult.networkError;
     } on http.ClientException {
       return AuthValidationResult.networkError;
+    } on FormatException {
+      return AuthValidationResult.invalid;
     }
   }
+
+  String _normalizeCallsign(String callsign) => callsign.trim().toUpperCase();
 
   @override
   void close() {
