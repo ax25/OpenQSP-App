@@ -7,6 +7,7 @@ abstract final class OpenQspColors {
   static const secondaryText = Color(0xFF667078);
   static const brand = Color(0xFF245E66);
   static const border = Color(0xFFCBD1D5);
+  static const positive = Color(0xFF39724D);
 }
 
 abstract final class OpenQspTheme {

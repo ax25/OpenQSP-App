@@ -35,7 +35,14 @@ class _UppercaseTextInputFormatter extends TextInputFormatter {
 }
 
 class CallsignOnboardingScreen extends StatefulWidget {
-  const CallsignOnboardingScreen({super.key});
+  const CallsignOnboardingScreen({
+    super.key,
+    required this.onSave,
+    this.initialCallsign,
+  });
+
+  final String? initialCallsign;
+  final Future<void> Function(String callsign) onSave;
 
   @override
   State<CallsignOnboardingScreen> createState() =>
@@ -43,8 +50,17 @@ class CallsignOnboardingScreen extends StatefulWidget {
 }
 
 class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
-  final _callsignController = TextEditingController();
-  bool _canContinue = false;
+  late final TextEditingController _callsignController;
+  late bool _canContinue;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialCallsign ?? '';
+    _callsignController = TextEditingController(text: initial);
+    _canContinue = initial.trim().isNotEmpty;
+  }
 
   @override
   void dispose() {
@@ -59,15 +75,22 @@ class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
     }
   }
 
-  void _continue() {
+  Future<void> _continue() async {
     final normalizedCallsign = _callsignController.text.trim();
-    if (normalizedCallsign.isEmpty) return;
+    if (normalizedCallsign.isEmpty || _isSaving) return;
+
+    setState(() => _isSaving = true);
 
     _callsignController.value = TextEditingValue(
       text: normalizedCallsign,
       selection: TextSelection.collapsed(offset: normalizedCallsign.length),
     );
     FocusManager.instance.primaryFocus?.unfocus();
+    try {
+      await widget.onSave(normalizedCallsign);
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 
   @override
@@ -116,7 +139,9 @@ class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
                       const SizedBox(height: 24),
                       ElevatedButton(
                         key: const Key('continueButton'),
-                        onPressed: _canContinue ? _continue : null,
+                        onPressed: _canContinue && !_isSaving
+                            ? _continue
+                            : null,
                         child: const Text('Continue'),
                       ),
                       const SizedBox(height: 24),
