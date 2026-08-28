@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../core/network/server_status_client.dart';
+import '../features/auth/application/auth_session.dart';
+import '../features/auth/data/auth_client.dart';
+import '../features/auth/data/auth_token_store.dart';
 import '../features/callsign/data/callsign_store.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/onboarding/presentation/callsign_onboarding_screen.dart';
@@ -11,10 +14,14 @@ class OpenQspApp extends StatefulWidget {
     super.key,
     this.callsignStore,
     required this.serverStatusClient,
+    required this.authClient,
+    this.authTokenStore,
   });
 
   final CallsignStore? callsignStore;
   final ServerStatusClient serverStatusClient;
+  final AuthClient authClient;
+  final AuthTokenStore? authTokenStore;
 
   @override
   State<OpenQspApp> createState() => _OpenQspAppState();
@@ -22,6 +29,7 @@ class OpenQspApp extends StatefulWidget {
 
 class _OpenQspAppState extends State<OpenQspApp> {
   late final CallsignStore _store;
+  late final AuthSession _authSession;
   String? _callsign;
   bool _loading = true;
   final _navigatorKey = GlobalKey<NavigatorState>();
@@ -30,6 +38,10 @@ class _OpenQspAppState extends State<OpenQspApp> {
   void initState() {
     super.initState();
     _store = widget.callsignStore ?? PreferencesCallsignStore();
+    _authSession = AuthSession(
+      client: widget.authClient,
+      tokenStore: widget.authTokenStore ?? SecureAuthTokenStore(),
+    );
     _loadCallsign();
   }
 
@@ -51,6 +63,7 @@ class _OpenQspAppState extends State<OpenQspApp> {
   @override
   void dispose() {
     widget.serverStatusClient.close();
+    widget.authClient.close();
     super.dispose();
   }
 
@@ -68,6 +81,7 @@ class _OpenQspAppState extends State<OpenQspApp> {
           : HomeScreen(
               callsign: _callsign!,
               serverStatusClient: widget.serverStatusClient,
+              authSession: _authSession,
               onEditCallsign: () async {
                 await _navigatorKey.currentState!.push<void>(
                   MaterialPageRoute(

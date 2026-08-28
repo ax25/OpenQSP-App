@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/app/app.dart';
 import 'package:openqsp_app/core/network/server_status_client.dart';
+import 'package:openqsp_app/features/auth/data/auth_client.dart';
+import 'package:openqsp_app/features/auth/data/auth_token_store.dart';
 import 'package:openqsp_app/features/callsign/data/callsign_store.dart';
 
 class FakeCallsignStore implements CallsignStore {
@@ -35,6 +37,39 @@ class FakeServerStatusClient implements ServerStatusClient {
   void close() {}
 }
 
+class FakeAuthClient implements AuthClient {
+  LoginResult loginResult = const LoginSuccess('new-token');
+  AuthValidationResult validationResult = AuthValidationResult.valid;
+  int validations = 0;
+
+  @override
+  Future<LoginResult> login({
+    required String callsign,
+    required String password,
+  }) async => loginResult;
+
+  @override
+  Future<AuthValidationResult> validateToken(String token) async {
+    validations++;
+    return validationResult;
+  }
+  @override
+  void close() {}
+}
+
+class FakeAuthTokenStore implements AuthTokenStore {
+  final Map<String, String> tokens = {};
+  @override
+  Future<String?> read(String callsign) async => tokens[callsign];
+  @override
+  Future<void> write(String callsign, String token) async {
+    tokens[callsign] = token;
+  }
+
+  @override
+  Future<void> delete(String callsign) async => tokens.remove(callsign);
+}
+
 void main() {
   final callsignField = find.byKey(const Key('callsignField'));
   final continueButton = find.byKey(const Key('continueButton'));
@@ -44,11 +79,15 @@ void main() {
     FakeCallsignStore store, {
     FakeServerStatusClient? statusClient,
     bool settle = true,
+    FakeAuthClient? authClient,
+    FakeAuthTokenStore? tokenStore,
   }) async {
     await tester.pumpWidget(
       OpenQspApp(
         callsignStore: store,
         serverStatusClient: statusClient ?? FakeServerStatusClient(),
+        authClient: authClient ?? FakeAuthClient(),
+        authTokenStore: tokenStore ?? FakeAuthTokenStore(),
       ),
     );
     if (settle) {
@@ -168,6 +207,113 @@ void main() {
 
     expect(store.value, 'N0CALL');
     expect(find.text('N0CALL'), findsOneWidget);
+  });
+
+  testWidgets(
+    'Messages prompts for an obscured password and authenticates callsign',
+    (tester) async {
+      final tokens = FakeAuthTokenStore();
+      await pumpApp(tester, FakeCallsignStore('EA3GNU'), tokenStore: tokens);
+      await tester.tap(find.byKey(const Key('messagesTile')));
+      await tester.pumpAndSettle();
+      expect(find.text('Password for EA3GNU'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('serverPasswordField')))
+            .obscureText,
+        isTrue,
+      );
+      await tester.enterText(
+        find.byKey(const Key('serverPasswordField')),
+        'secret',
+      );
+      await tester.tap(find.byKey(const Key('connectButton')));
+      await tester.pumpAndSettle();
+      expect(tokens.tokens['EA3GNU'], 'new-token');
+      expect(find.text('Messages are coming soon'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(find.text('Connected to server'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'incorrect password stays available, clears field, and permits retry',
+    (tester) async {
+      final auth = FakeAuthClient()
+        ..loginResult = const LoginError(LoginFailure.incorrectPassword);
+      await pumpApp(tester, FakeCallsignStore('EA3GNU'), authClient: auth);
+      await tester.tap(find.byKey(const Key('messagesTile')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const Key('serverPasswordField')),
+        'wrong',
+      );
+      await tester.tap(find.byKey(const Key('connectButton')));
+      await tester.pumpAndSettle();
+      expect(find.text('Incorrect password'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('serverPasswordField')))
+            .controller!
+            .text,
+        isEmpty,
+      );
+      expect(find.text('Server available'), findsOneWidget);
+      auth.loginResult = const LoginSuccess('retry-token');
+      await tester.enterText(
+        find.byKey(const Key('serverPasswordField')),
+        'right',
+      );
+      await tester.tap(find.byKey(const Key('connectButton')));
+      await tester.pumpAndSettle();
+      expect(find.text('Messages are coming soon'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'valid scoped token skips prompt, while invalid token is cleared',
+    (tester) async {
+      final auth = FakeAuthClient();
+      final tokens = FakeAuthTokenStore()..tokens['EA3GNU'] = 'stored';
+      await pumpApp(
+        tester,
+        FakeCallsignStore('EA3GNU'),
+        authClient: auth,
+        tokenStore: tokens,
+      );
+      await tester.tap(find.byKey(const Key('messagesTile')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('serverPasswordField')), findsNothing);
+      expect(find.text('Messages are coming soon'), findsOneWidget);
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      auth.validationResult = AuthValidationResult.invalid;
+      await tester.tap(find.byKey(const Key('messagesTile')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('serverPasswordField')), findsOneWidget);
+      expect(tokens.tokens['EA3GNU'], isNull);
+    },
+  );
+
+  testWidgets('unavailable server does not prompt for password', (tester) async {
+    await pumpApp(
+      tester,
+      FakeCallsignStore('EA3GNU'),
+      statusClient: FakeServerStatusClient(result: false),
+    );
+    await tester.tap(find.byKey(const Key('messagesTile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('serverPasswordField')), findsNothing);
+    expect(find.text('Server unavailable'), findsWidgets);
+  });
+
+  testWidgets('token for another callsign is not reused', (tester) async {
+    final tokens = FakeAuthTokenStore()..tokens['EA3GNU'] = 'other-token';
+    await pumpApp(tester, FakeCallsignStore('N0CALL'), tokenStore: tokens);
+    await tester.tap(find.byKey(const Key('messagesTile')));
+    await tester.pumpAndSettle();
+    expect(find.text('Password for N0CALL'), findsOneWidget);
   });
 
   for (final size in [const Size(320, 480), const Size(1200, 800)]) {

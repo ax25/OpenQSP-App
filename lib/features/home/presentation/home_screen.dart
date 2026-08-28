@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../../app/theme/openqsp_theme.dart';
 import '../../../core/network/server_status_client.dart';
+import '../../auth/application/auth_session.dart';
+import '../../auth/data/auth_client.dart';
+import '../../messages/presentation/messages_screen.dart';
 
 enum ServerConnectionState {
   checking('Checking server...'),
@@ -19,11 +22,13 @@ class HomeScreen extends StatefulWidget {
     required this.callsign,
     required this.onEditCallsign,
     required this.serverStatusClient,
+    required this.authSession,
   });
 
   final String callsign;
   final VoidCallback onEditCallsign;
   final ServerStatusClient serverStatusClient;
+  final AuthSession authSession;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -44,16 +49,142 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) _checkServer();
   }
 
+  @override
+  void didUpdateWidget(HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.callsign != widget.callsign &&
+        _serverState == ServerConnectionState.connected) {
+      _serverState = ServerConnectionState.available;
+    }
+  }
+
   Future<void> _checkServer() async {
+    final wasConnected = _serverState == ServerConnectionState.connected;
     if (_serverState != ServerConnectionState.checking && mounted) {
       setState(() => _serverState = ServerConnectionState.checking);
     }
     final available = await widget.serverStatusClient.isAvailable();
     if (!mounted) return;
-    setState(
-      () => _serverState = available
-          ? ServerConnectionState.available
-          : ServerConnectionState.unavailable,
+    setState(() {
+      if (!available) {
+        _serverState = ServerConnectionState.unavailable;
+      } else if (!wasConnected) {
+        _serverState = ServerConnectionState.available;
+      } else {
+        _serverState = ServerConnectionState.connected;
+      }
+    });
+  }
+
+  Future<void> _onMessagesTap() async {
+    if (_serverState == ServerConnectionState.unavailable ||
+        _serverState == ServerConnectionState.checking) {
+      _showMessage('Server unavailable');
+      return;
+    }
+    final gate = await widget.authSession.authenticateStoredToken(
+      widget.callsign,
+    );
+    if (!mounted) return;
+    switch (gate) {
+      case AuthGateResult.connected:
+        _openMessages();
+        return;
+      case AuthGateResult.serverUnavailable:
+        setState(() => _serverState = ServerConnectionState.unavailable);
+        _showMessage('Server unavailable');
+        return;
+      case AuthGateResult.needsPassword:
+        await _promptUntilAuthenticated();
+        return;
+    }
+  }
+
+  Future<void> _promptUntilAuthenticated() async {
+    String? error;
+    while (mounted) {
+      final password = await _showPasswordDialog(error: error);
+      if (password == null || !mounted) return;
+      final result = await widget.authSession.login(widget.callsign, password);
+      if (!mounted) return;
+      if (result is LoginSuccess) {
+        setState(() => _serverState = ServerConnectionState.connected);
+        _openMessages();
+        return;
+      }
+      final failure = (result as LoginError).failure;
+      if (failure == LoginFailure.incorrectPassword) {
+        setState(() => _serverState = ServerConnectionState.available);
+        error = 'Incorrect password';
+        continue;
+      }
+      if (failure == LoginFailure.network) {
+        setState(() => _serverState = ServerConnectionState.unavailable);
+        _showMessage('Server unavailable');
+      } else {
+        _showMessage('Unable to connect to server');
+      }
+      return;
+    }
+  }
+
+  Future<String?> _showPasswordDialog({String? error}) {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Connect to server'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Password for ${widget.callsign}'),
+            const SizedBox(height: 12),
+            TextField(
+              key: const Key('serverPasswordField'),
+              controller: controller,
+              obscureText: true,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Password',
+                errorText: error,
+              ),
+              onSubmitted: (value) {
+                if (value.isNotEmpty) Navigator.pop(dialogContext, value);
+              },
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const Key('connectButton'),
+            onPressed: () {
+              if (controller.text.isNotEmpty) {
+                Navigator.pop(dialogContext, controller.text);
+              }
+            },
+            child: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _openMessages() {
+    setState(() => _serverState = ServerConnectionState.connected);
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(builder: (_) => const MessagesScreen()),
     );
   }
 
@@ -91,16 +222,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           const SizedBox(height: 12),
-                          const _CapabilityTile(
+                          _CapabilityTile(
+                            key: const Key('messagesTile'),
                             icon: Icons.mail_outline,
                             title: 'Messages',
                             subtitle: 'Private messages',
+                            onTap: _onMessagesTap,
                           ),
                           const SizedBox(height: 12),
                           const _CapabilityTile(
                             icon: Icons.campaign_outlined,
                             title: 'Bulletins',
                             subtitle: 'Community bulletins',
+                            onTap: null,
                           ),
                         ],
                       ),
@@ -274,7 +408,8 @@ class _Status extends StatelessWidget {
   final VoidCallback onRetry;
   @override
   Widget build(BuildContext context) {
-    final positive = state == ServerConnectionState.available;
+    final positive = state == ServerConnectionState.available ||
+        state == ServerConnectionState.connected;
     return InkWell(
       key: const Key('serverStatusRetry'),
       borderRadius: BorderRadius.circular(16),
@@ -315,10 +450,12 @@ class _CapabilityTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    required this.onTap,
   });
   final IconData icon;
   final String title;
   final String subtitle;
+  final VoidCallback? onTap;
   @override
   Widget build(BuildContext context) => Material(
     color: OpenQspColors.surface,
@@ -328,7 +465,7 @@ class _CapabilityTile extends StatelessWidget {
     ),
     child: InkWell(
       borderRadius: BorderRadius.circular(10),
-      onTap: () {},
+      onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
