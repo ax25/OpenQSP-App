@@ -1,30 +1,48 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-
-import 'package:openqsp_app/main.dart';
+import 'package:openqsp_app/app/app.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  final callsignField = find.byKey(const Key('callsignField'));
+  final continueButton = find.byKey(const Key('continueButton'));
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  testWidgets('renders the callsign onboarding screen', (tester) async {
+    await tester.pumpWidget(const OpenQspApp());
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
+    expect(find.text('OpenQSP'), findsOneWidget);
+    expect(find.text('Insert your callsign'), findsOneWidget);
+    expect(find.text('Callsign'), findsOneWidget);
+    expect(find.text('Continue'), findsOneWidget);
+  });
+
+  testWidgets('Continue is disabled while the callsign is empty', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const OpenQspApp());
+
+    final button = tester.widget<ElevatedButton>(continueButton);
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('entering a callsign enables Continue', (tester) async {
+    await tester.pumpWidget(const OpenQspApp());
+
+    await tester.enterText(callsignField, 'ea3gnu');
     await tester.pump();
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    final button = tester.widget<ElevatedButton>(continueButton);
+    expect(button.onPressed, isNotNull);
+  });
+
+  testWidgets('callsign input is trimmed and normalized to uppercase', (
+    tester,
+  ) async {
+    await tester.pumpWidget(const OpenQspApp());
+
+    await tester.enterText(callsignField, ' ea3gnu-5 ');
+    await tester.pump();
+
+    final field = tester.widget<TextField>(callsignField);
+    expect(field.controller?.text, 'EA3GNU-5');
   });
 }
