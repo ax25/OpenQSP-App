@@ -233,7 +233,7 @@ void main() {
       await tester.tap(find.byKey(const Key('connectButton')));
       await tester.pumpAndSettle();
       expect(tokens.tokens['EA3GNU'], 'new-token');
-      expect(find.text('Messages are coming soon'), findsOneWidget);
+      expect(find.text('Unable to load conversations'), findsOneWidget);
       await tester.pageBack();
       await tester.pumpAndSettle();
       expect(find.text('Connected to server'), findsOneWidget);
@@ -270,7 +270,7 @@ void main() {
       );
       await tester.tap(find.byKey(const Key('connectButton')));
       await tester.pumpAndSettle();
-      expect(find.text('Messages are coming soon'), findsOneWidget);
+      expect(find.text('Unable to load conversations'), findsOneWidget);
     },
   );
 
@@ -288,7 +288,7 @@ void main() {
       await tester.tap(find.byKey(const Key('messagesTile')));
       await tester.pumpAndSettle();
       expect(find.byKey(const Key('serverPasswordField')), findsNothing);
-      expect(find.text('Messages are coming soon'), findsOneWidget);
+      expect(find.text('Unable to load conversations'), findsOneWidget);
       await tester.pageBack();
       await tester.pumpAndSettle();
       auth.validationResult = AuthValidationResult.invalid;
