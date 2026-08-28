@@ -8,6 +8,11 @@ class AuthSession {
 
   final AuthClient client;
   final AuthTokenStore tokenStore;
+  String? _activeCallsign;
+  String? _activeToken;
+
+  String? tokenFor(String callsign) =>
+      _activeCallsign == _normalize(callsign) ? _activeToken : null;
 
   Future<AuthGateResult> authenticateStoredToken(String callsign) async {
     final token = await tokenStore.read(callsign);
@@ -18,8 +23,10 @@ class AuthSession {
     );
     switch (validation) {
       case AuthValidationResult.valid:
+        _setActive(callsign, token);
         return AuthGateResult.connected;
       case AuthValidationResult.invalid:
+        _clearActive(callsign);
         await tokenStore.delete(callsign);
         return AuthGateResult.needsPassword;
       case AuthValidationResult.networkError:
@@ -32,7 +39,27 @@ class AuthSession {
     final result = await client.login(callsign: callsign, password: password);
     if (result case LoginSuccess(:final accessToken)) {
       await tokenStore.write(callsign, accessToken);
+      _setActive(callsign, accessToken);
     }
     return result;
   }
+
+  Future<void> invalidate(String callsign) async {
+    _clearActive(callsign);
+    await tokenStore.delete(callsign);
+  }
+
+  void _setActive(String callsign, String token) {
+    _activeCallsign = _normalize(callsign);
+    _activeToken = token;
+  }
+
+  void _clearActive(String callsign) {
+    if (_activeCallsign == _normalize(callsign)) {
+      _activeCallsign = null;
+      _activeToken = null;
+    }
+  }
+
+  String _normalize(String callsign) => callsign.trim().toUpperCase();
 }

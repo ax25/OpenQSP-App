@@ -6,6 +6,7 @@ import '../features/auth/data/auth_client.dart';
 import '../features/auth/data/auth_token_store.dart';
 import '../features/callsign/data/callsign_store.dart';
 import '../features/home/presentation/home_screen.dart';
+import '../features/messages/data/messages_transport.dart';
 import '../features/onboarding/presentation/callsign_onboarding_screen.dart';
 import 'theme/openqsp_theme.dart';
 
@@ -16,12 +17,16 @@ class OpenQspApp extends StatefulWidget {
     required this.serverStatusClient,
     required this.authClient,
     this.authTokenStore,
+    required this.messagesRepository,
+    required this.messagesRealtimeFactory,
   });
 
   final CallsignStore? callsignStore;
   final ServerStatusClient serverStatusClient;
   final AuthClient authClient;
   final AuthTokenStore? authTokenStore;
+  final MessagesRepository messagesRepository;
+  final MessagesRealtimeClient Function() messagesRealtimeFactory;
 
   @override
   State<OpenQspApp> createState() => _OpenQspAppState();
@@ -82,6 +87,8 @@ class _OpenQspAppState extends State<OpenQspApp> {
               callsign: _callsign!,
               serverStatusClient: widget.serverStatusClient,
               authSession: _authSession,
+              messagesRepository: widget.messagesRepository,
+              messagesRealtimeFactory: widget.messagesRealtimeFactory,
               onEditCallsign: () async {
                 await _navigatorKey.currentState!.push<void>(
                   MaterialPageRoute(

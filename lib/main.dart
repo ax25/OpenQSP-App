@@ -5,6 +5,8 @@ import 'app/app.dart';
 import 'core/config/server_config.dart';
 import 'core/network/server_status_client.dart';
 import 'features/auth/data/auth_client.dart';
+import 'features/messages/data/internet_messages_realtime_client.dart';
+import 'features/messages/data/internet_messages_repository.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -14,6 +16,9 @@ Future<void> main() async {
     OpenQspApp(
       serverStatusClient: InternetServerStatusClient(baseUri: config.baseUri),
       authClient: InternetAuthClient(baseUri: config.baseUri),
+      messagesRepository: InternetMessagesRepository(baseUri: config.baseUri),
+      messagesRealtimeFactory: () =>
+          InternetMessagesRealtimeClient(baseUri: config.baseUri),
     ),
   );
 }

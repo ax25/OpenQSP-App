@@ -4,6 +4,8 @@ import '../../../app/theme/openqsp_theme.dart';
 import '../../../core/network/server_status_client.dart';
 import '../../auth/application/auth_session.dart';
 import '../../auth/data/auth_client.dart';
+import '../../messages/application/messages_controller.dart';
+import '../../messages/data/messages_transport.dart';
 import '../../messages/presentation/messages_screen.dart';
 
 enum ServerConnectionState {
@@ -23,12 +25,16 @@ class HomeScreen extends StatefulWidget {
     required this.onEditCallsign,
     required this.serverStatusClient,
     required this.authSession,
+    required this.messagesRepository,
+    required this.messagesRealtimeFactory,
   });
 
   final String callsign;
   final VoidCallback onEditCallsign;
   final ServerStatusClient serverStatusClient;
   final AuthSession authSession;
+  final MessagesRepository messagesRepository;
+  final MessagesRealtimeClient Function() messagesRealtimeFactory;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -184,7 +190,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _openMessages() {
     setState(() => _serverState = ServerConnectionState.connected);
     Navigator.of(context).push<void>(
-      MaterialPageRoute(builder: (_) => const MessagesScreen()),
+      MaterialPageRoute(
+        builder: (_) => MessagesScreen(
+          controller: MessagesController(
+            callsign: widget.callsign,
+            token: widget.authSession.tokenFor(widget.callsign)!,
+            repository: widget.messagesRepository,
+            realtime: widget.messagesRealtimeFactory(),
+            onAuthenticationRequired: () =>
+                widget.authSession.invalidate(widget.callsign),
+          ),
+        ),
+      ),
     );
   }
 
