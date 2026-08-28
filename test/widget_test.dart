@@ -22,6 +22,12 @@ void main() {
 
     final button = tester.widget<ElevatedButton>(continueButton);
     expect(button.onPressed, isNull);
+
+    await tester.enterText(callsignField, '   ');
+    await tester.pump();
+
+    final whitespaceButton = tester.widget<ElevatedButton>(continueButton);
+    expect(whitespaceButton.onPressed, isNull);
   });
 
   testWidgets('entering a callsign enables Continue', (tester) async {
@@ -34,7 +40,7 @@ void main() {
     expect(button.onPressed, isNotNull);
   });
 
-  testWidgets('callsign input is normalized without moving the selection', (
+  testWidgets('editing in the middle preserves the cursor position', (
     tester,
   ) async {
     await tester.pumpWidget(const OpenQspApp());
@@ -43,16 +49,24 @@ void main() {
     tester.testTextInput.updateEditingValue(
       const TextEditingValue(
         text: 'ea3gnu',
-        selection: TextSelection(baseOffset: 2, extentOffset: 4),
+        selection: TextSelection.collapsed(offset: 2),
+      ),
+    );
+    await tester.pump();
+
+    tester.testTextInput.updateEditingValue(
+      const TextEditingValue(
+        text: 'eax3gnu',
+        selection: TextSelection.collapsed(offset: 3),
       ),
     );
     await tester.pump();
 
     final field = tester.widget<TextField>(callsignField);
-    expect(field.controller?.text, 'EA3GNU');
+    expect(field.controller?.text, 'EAX3GNU');
     expect(
       field.controller?.selection,
-      const TextSelection(baseOffset: 2, extentOffset: 4),
+      const TextSelection.collapsed(offset: 3),
     );
   });
 
@@ -73,15 +87,16 @@ void main() {
   });
 
   testWidgets('form stays fluid in a narrow viewport', (tester) async {
-    tester.view.physicalSize = const Size(400, 800);
+    tester.view.physicalSize = const Size(320, 480);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
     await tester.pumpWidget(const OpenQspApp());
 
-    expect(tester.getSize(callsignField).width, 352);
-    expect(tester.getSize(continueButton).width, 352);
+    expect(tester.getSize(callsignField).width, 272);
+    expect(tester.getSize(continueButton).width, 272);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('form is centered and constrained in a wide viewport', (
@@ -97,5 +112,6 @@ void main() {
     expect(tester.getSize(callsignField).width, 420);
     expect(tester.getSize(continueButton).width, 420);
     expect(tester.getCenter(callsignField).dx, 600);
+    expect(tester.takeException(), isNull);
   });
 }
