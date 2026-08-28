@@ -447,6 +447,7 @@ class _Status extends StatelessWidget {
 
 class _CapabilityTile extends StatelessWidget {
   const _CapabilityTile({
+    super.key,
     required this.icon,
     required this.title,
     required this.subtitle,
