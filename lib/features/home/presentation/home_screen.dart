@@ -27,55 +27,53 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: SafeArea(
-        child: CustomScrollView(
-          slivers: [
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(24, 32, 24, 0),
-              sliver: SliverToBoxAdapter(
-                child: Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 640),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _HomeHeader(
-                          callsign: callsign,
-                          onEditCallsign: onEditCallsign,
-                        ),
-                        const SizedBox(height: 30),
-                        Text(
-                          'Services',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        const SizedBox(height: 12),
-                        const _CapabilityTile(
-                          icon: Icons.mail_outline,
-                          title: 'Messages',
-                          subtitle: 'Private messages',
-                        ),
-                        const SizedBox(height: 12),
-                        const _CapabilityTile(
-                          icon: Icons.campaign_outlined,
-                          title: 'Bulletins',
-                          subtitle: 'Community bulletins',
-                        ),
-                      ],
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  key: const Key('homeScrollView'),
+                  padding: const EdgeInsets.only(top: 32, bottom: 16),
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 640),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _HomeHeader(
+                            callsign: callsign,
+                            onEditCallsign: onEditCallsign,
+                          ),
+                          const SizedBox(height: 30),
+                          Text(
+                            'Services',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 12),
+                          const _CapabilityTile(
+                            icon: Icons.mail_outline,
+                            title: 'Messages',
+                            subtitle: 'Private messages',
+                          ),
+                          const SizedBox(height: 12),
+                          const _CapabilityTile(
+                            icon: Icons.campaign_outlined,
+                            title: 'Bulletins',
+                            subtitle: 'Community bulletins',
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(24, 32, 24, 32),
-              sliver: SliverFillRemaining(
-                hasScrollBody: false,
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  child: _Status(state: serverState),
-                ),
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 24),
+                child: _Status(state: serverState),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -101,13 +99,12 @@ class _HomeHeader extends StatelessWidget {
         final headerActions = _HeaderActions(
           callsign: callsign,
           onEdit: onEditCallsign,
-          fillAvailableWidth: constraints.maxWidth < 480,
         );
 
         if (constraints.maxWidth < 480) {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: [title, const SizedBox(height: 12), headerActions],
+            children: [title, const SizedBox(height: 8), headerActions],
           );
         }
 
@@ -127,26 +124,20 @@ class _HeaderActions extends StatelessWidget {
   const _HeaderActions({
     required this.callsign,
     required this.onEdit,
-    required this.fillAvailableWidth,
   });
 
   final String callsign;
   final VoidCallback onEdit;
-  final bool fillAvailableWidth;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: fillAvailableWidth
-          ? CrossAxisAlignment.start
-          : CrossAxisAlignment.end,
+    return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        _CallsignAction(
-          callsign: callsign,
-          onEdit: onEdit,
-          fillAvailableWidth: fillAvailableWidth,
+        Flexible(
+          child: _CallsignAction(callsign: callsign, onEdit: onEdit),
         ),
-        const SizedBox(height: 2),
+        const SizedBox(width: 10),
         const _TransportSelector(),
       ],
     );
@@ -157,27 +148,25 @@ class _CallsignAction extends StatelessWidget {
   const _CallsignAction({
     required this.callsign,
     required this.onEdit,
-    this.fillAvailableWidth = false,
   });
 
   final String callsign;
   final VoidCallback onEdit;
-  final bool fillAvailableWidth;
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisSize: fillAvailableWidth ? MainAxisSize.max : MainAxisSize.min,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (fillAvailableWidth)
-          Expanded(child: _CallsignText(callsign))
-        else
-          Flexible(child: _CallsignText(callsign)),
+        Flexible(child: _CallsignText(callsign)),
         IconButton(
           key: const Key('editCallsignButton'),
           tooltip: 'Change callsign',
           onPressed: onEdit,
-          icon: const Icon(Icons.edit_outlined),
+          padding: const EdgeInsets.all(6),
+          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+          visualDensity: VisualDensity.compact,
+          icon: const Icon(Icons.edit_outlined, size: 19),
         ),
       ],
     );

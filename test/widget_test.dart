@@ -106,6 +106,13 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       await pumpApp(tester, FakeCallsignStore('EA3GNU'));
       expect(tester.takeException(), isNull);
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(
+          of: find.byKey(const Key('homeScrollView')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      expect(scrollable.position.maxScrollExtent, 0);
     });
   }
 
