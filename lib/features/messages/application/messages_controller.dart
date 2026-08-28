@@ -125,6 +125,13 @@ class MessagesController extends ChangeNotifier {
   Future<void> send(String remote, String text) async {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
+    if (trimmed.length > maximumMessageLength) {
+      throw ArgumentError.value(
+        text,
+        'text',
+        'Message cannot exceed $maximumMessageLength characters',
+      );
+    }
     final message = await repository.send(
       callsign: callsign,
       remoteCallsign: _key(remote),

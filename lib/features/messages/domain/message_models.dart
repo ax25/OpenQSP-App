@@ -1,5 +1,7 @@
 enum MessageDirection { sent, received }
 
+const int maximumMessageLength = 208;
+
 class InternetMessage {
   const InternetMessage({
     required this.id,
