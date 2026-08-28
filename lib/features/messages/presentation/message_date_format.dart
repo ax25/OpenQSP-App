@@ -8,10 +8,10 @@ String formatConversationTimestamp(DateTime timestamp, {DateTime? now}) {
   final localNow = (now ?? DateTime.now()).toLocal();
   if (_isSameDay(local, localNow)) return formatMessageTime(local);
   if (_isSameDay(local, _previousLocalDay(localNow))) {
-    return 'Ayer ${formatMessageTime(local)}';
+    return 'Ayer';
   }
-  return '${_twoDigits(local.day)}/${_twoDigits(local.month)} '
-      '${formatMessageTime(local)}';
+  return '${_twoDigits(local.day)}/${_twoDigits(local.month)}/'
+      '${_twoDigits(local.year % 100)}';
 }
 
 String formatMessageDateSeparator(DateTime timestamp, {DateTime? now}) {
