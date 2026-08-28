@@ -44,7 +44,7 @@ void main() {
     );
     expect(find.text('10:21'), findsOneWidget);
     expect(find.text('10:22'), findsOneWidget);
-    expect(find.text('10:23'), findsOneWidget);
+    expect(find.text('10:24'), findsOneWidget);
     expect(
       tester.widget<Align>(find.byKey(const Key('message-today-1'))).alignment,
       Alignment.centerLeft,
