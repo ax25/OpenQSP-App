@@ -71,7 +71,9 @@ abstract final class OpenQspTheme {
           disabledBackgroundColor: OpenQspColors.brand.withValues(alpha: 0.38),
           disabledForegroundColor: Colors.white.withValues(alpha: 0.75),
           elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
           textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
         ),
       ),

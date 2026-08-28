@@ -106,9 +106,7 @@ class _CallsignOnboardingScreenState extends State<CallsignOnboardingScreen> {
                         textInputAction: TextInputAction.done,
                         autocorrect: false,
                         enableSuggestions: false,
-                        inputFormatters: const [
-                          _UppercaseTextInputFormatter(),
-                        ],
+                        inputFormatters: const [_UppercaseTextInputFormatter()],
                         decoration: const InputDecoration(
                           labelText: 'Callsign',
                         ),
