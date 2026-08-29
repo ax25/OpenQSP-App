@@ -16,7 +16,6 @@ import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
 import 'package:openqsp_app/features/aprs/openqsp_carriage/openqsp_aprs_carriage.dart';
 import 'package:openqsp_app/features/messages/data/aprs_messages_transport.dart';
-import 'package:openqsp_app/features/messages/data/messages_transport.dart';
 import 'package:openqsp_app/features/messages/domain/message_models.dart';
 
 class _MemoryStorage implements BluetoothTncStorage {
