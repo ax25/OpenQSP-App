@@ -68,6 +68,7 @@ final class AprsMessagesTransport
     }
     if (!_connected) {
       _connected = true;
+      _lastObservedObject = _tnc.lastOpenQspObject;
       session.addListener(_onSessionChanged);
       _tnc.addListener(_onTncChanged);
     }
