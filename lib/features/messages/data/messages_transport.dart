@@ -14,6 +14,11 @@ abstract interface class MessagesRepository {
     required String token,
   });
 
+  Future<void> markConversationRead({
+    required String remoteCallsign,
+    required String token,
+  });
+
   Future<SyncBatch> sync({required String token, String? cursor});
 }
 
