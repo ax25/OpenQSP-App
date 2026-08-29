@@ -149,6 +149,24 @@ void main() {
     expect(controller.historyFor('N0CALL').single.id, 'missed');
     expect(localStore.cursors['internet'], 'cursor-2');
   });
+
+  test('duplicate connected events do not trigger repeated sync', () async {
+    await controller.start();
+    expect(repository.syncCalls, 1);
+
+    realtime.state(RealtimeConnectionState.connected);
+    realtime.state(RealtimeConnectionState.connected);
+    realtime.state(RealtimeConnectionState.connected);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(repository.syncCalls, 1);
+
+    realtime.state(RealtimeConnectionState.reconnecting);
+    realtime.state(RealtimeConnectionState.connected);
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(repository.syncCalls, 2);
+  });
 }
 
 InternetMessage message(
