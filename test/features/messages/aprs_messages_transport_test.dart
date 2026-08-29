@@ -221,6 +221,65 @@ void main() {
     ]);
     await expectLater(pending, throwsA(isA<TimeoutException>()));
   });
+
+  test('sync timeout is refreshed by continuing OpenQSP traffic', () async {
+    final pending = transport.sync(token: '', cursor: '0');
+    await Future<void>.delayed(Duration.zero);
+
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 1,
+        createdAt: 1700000000,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'still active',
+      ),
+      transactionId: '030',
+    );
+
+    // Total wall time is now longer than the configured one-second timeout,
+    // but less than one second has elapsed since the last OpenQSP traffic.
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    _injectObject(
+      service,
+      const OpenQspEnd(
+        requestOperation: OpenQspOperation.getNewMessages,
+        returnedCount: 1,
+        nextSince: 1,
+        hasMore: false,
+      ),
+      transactionId: '031',
+    );
+
+    final batch = await pending;
+    expect(batch.cursor, '1');
+    expect(batch.messages.single.body, 'still active');
+  });
+
+  test('concurrent sync calls share one GET_NEW_MESSAGES request', () async {
+    final first = transport.sync(token: '', cursor: '0');
+    final second = transport.sync(token: '', cursor: '0');
+    expect(identical(first, second), isTrue);
+
+    await Future<void>.delayed(Duration.zero);
+    expect(service.sentBytes, hasLength(1));
+
+    _injectObject(
+      service,
+      const OpenQspEnd(
+        requestOperation: OpenQspOperation.getNewMessages,
+        returnedCount: 0,
+        nextSince: 0,
+        hasMore: false,
+      ),
+      transactionId: '040',
+    );
+
+    expect((await first).cursor, '0');
+    expect((await second).cursor, '0');
+  });
 }
 
 void _injectObject(
