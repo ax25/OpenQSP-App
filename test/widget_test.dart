@@ -9,6 +9,7 @@ import 'package:openqsp_app/features/auth/data/auth_token_store.dart';
 import 'package:openqsp_app/features/callsign/data/callsign_store.dart';
 import 'package:openqsp_app/features/messages/data/messages_transport.dart';
 import 'package:openqsp_app/features/messages/domain/message_models.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class FakeCallsignStore implements CallsignStore {
   FakeCallsignStore([this.value]);
@@ -76,6 +77,8 @@ class FakeAuthTokenStore implements AuthTokenStore {
 }
 
 void main() {
+  SharedPreferences.setMockInitialValues({});
+
   final callsignField = find.byKey(const Key('callsignField'));
   final continueButton = find.byKey(const Key('continueButton'));
 
