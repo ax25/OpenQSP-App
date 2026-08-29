@@ -120,23 +120,31 @@ class _OpenQspAppState extends State<OpenQspApp> {
       theme: OpenQspTheme.light,
       builder: (context, child) {
         final controller = _tncController;
-        if (_loading || controller == null || child == null) {
+        final session = _aprsSession;
+        if (_loading || controller == null || session == null || child == null) {
           return child ?? const SizedBox.shrink();
         }
-        return LayoutBuilder(
-          builder: (context, constraints) => Stack(
-            fit: StackFit.expand,
-            children: [
-              child,
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                height: constraints.maxHeight * 0.25,
-                child: AprsConsole(controller: controller),
+        return AnimatedBuilder(
+          animation: session,
+          child: child,
+          builder: (context, appChild) {
+            if (!session.active) return appChild!;
+            return LayoutBuilder(
+              builder: (context, constraints) => Stack(
+                fit: StackFit.expand,
+                children: [
+                  appChild!,
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    height: constraints.maxHeight * 0.25,
+                    child: AprsConsole(controller: controller),
+                  ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         );
       },
       home: _loading
