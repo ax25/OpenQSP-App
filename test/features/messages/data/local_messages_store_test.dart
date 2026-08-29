@@ -19,6 +19,7 @@ void main() {
 
     await first.upsert('EA3GNU', value);
     await first.setCursor('EA3GNU', 'internet', 'signed-cursor');
+    await first.setCursor('EA3GNU', 'aprs', '4');
 
     final restored = PreferencesLocalMessagesStore();
     expect((await restored.messages('EA3GNU')).single.body, 'hola');
@@ -55,7 +56,7 @@ void main() {
     expect(messages.single.deliveryStatus, MessageDeliveryStatus.delivered);
   });
 
-  test('incoming Internet history advances APRS mailbox cursor monotonically', () async {
+  test('storing canonical messages does not infer APRS cursor', () async {
     final store = PreferencesLocalMessagesStore();
     await store.setCursor('EA3GNU', 'aprs', '5');
 
@@ -70,22 +71,11 @@ void main() {
         id: _serverId('EA3XYZ', 30),
         from: 'EA3GNU',
         to: 'EA3XYZ',
-        body: 'outgoing must not alter local mailbox cursor',
+        body: 'outgoing',
       ),
     ]);
 
-    expect(await store.cursor('EA3GNU', 'aprs'), '8');
-
-    await store.upsert(
-      'EA3GNU',
-      _message(
-        id: _serverId('EA3GNU', 3),
-        from: 'EA3OLD',
-        to: 'EA3GNU',
-        body: 'older',
-      ),
-    );
-    expect(await store.cursor('EA3GNU', 'aprs'), '8');
+    expect(await store.cursor('EA3GNU', 'aprs'), '5');
   });
 }
 
