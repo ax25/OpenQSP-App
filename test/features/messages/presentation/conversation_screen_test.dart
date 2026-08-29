@@ -63,10 +63,17 @@ void main() {
       tester.widget<Align>(find.byKey(const Key('message-today-2'))).alignment,
       Alignment.centerRight,
     );
-    expect(find.byKey(const Key('status-yesterday')), findsOneWidget);
-    expect(find.byKey(const Key('status-today-2')), findsOneWidget);
-    expect(find.bySemanticsLabel('Delivered to recipient'), findsOneWidget);
-    expect(find.bySemanticsLabel('Read by recipient'), findsOneWidget);
+
+    final deliveredIcon = tester.widget<Icon>(
+      find.byKey(const Key('status-yesterday')),
+    );
+    final readIcon = tester.widget<Icon>(
+      find.byKey(const Key('status-today-2')),
+    );
+    expect(deliveredIcon.icon, Icons.check);
+    expect(deliveredIcon.color, Colors.green);
+    expect(readIcon.icon, Icons.check);
+    expect(readIcon.color, Colors.blue);
     expect(find.byKey(const Key('status-today-1')), findsNothing);
   });
 
