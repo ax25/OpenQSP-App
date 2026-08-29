@@ -119,7 +119,10 @@ void main() {
   });
 
   test('unsolicited MESSAGE becomes a realtime received event', () async {
-    final event = transport.events.whereType<MessageReceived>().first;
+    final event = transport.events
+        .where((value) => value is MessageReceived)
+        .cast<MessageReceived>()
+        .first;
     _injectObject(
       service,
       const OpenQspMessage(
@@ -154,7 +157,8 @@ void _injectObject(
   final fragment = fragmentFrame(core, transactionId).single;
   final information = messageEncoder.encode(
     addressee: 'EA3GNU',
-    body: '${fragment.body}{00',
+    body: fragment.body,
+    messageId: '00',
   );
   final ax25 = ax25Encoder.encodeUi(
     destination: const Ax25Address(
