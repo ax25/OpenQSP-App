@@ -33,6 +33,10 @@ String messagesSyncCursorKey(MessagesRepository repository) =>
     ? repository.syncCursorKey
     : 'internet';
 
+extension MessagesRepositorySyncCursor on MessagesRepository {
+  String get syncCursorKey => messagesSyncCursorKey(this);
+}
+
 abstract interface class MessagesRealtimeClient {
   Stream<MessagingEvent> get events;
   Stream<RealtimeConnectionState> get connectionStates;
