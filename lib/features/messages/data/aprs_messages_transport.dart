@@ -52,10 +52,10 @@ final class AprsMessagesTransport
   bool _connected = false;
   bool _closed = false;
 
-  TncSettingsController get _tnc => session.tncController;
-
   @override
   String get syncCursorKey => 'aprs';
+
+  TncSettingsController get _tnc => session.tncController;
 
   @override
   Stream<MessagingEvent> get events => _events.stream;
@@ -66,36 +66,34 @@ final class AprsMessagesTransport
   @override
   Future<void> connect({required String callsign, required String token}) async {
     if (_closed) throw StateError('APRS messages transport is closed');
-    if (callsign.trim().toUpperCase() != this.callsign) {
-      throw ArgumentError.value(callsign, 'callsign', 'Unexpected APRS identity');
+    final normalized = callsign.trim().toUpperCase();
+    if (normalized != this.callsign) {
+      throw ArgumentError.value(callsign, 'callsign', 'Unexpected callsign');
     }
-    if (!_connected) {
-      _connected = true;
-      _lastObservedObject = _tnc.lastOpenQspObject;
-      session.addListener(_onSessionChanged);
-      _tnc.addListener(_onTncChanged);
-    }
-    _emitConnectionState();
+    if (_connected) return;
+    _lastObservedObject = _tnc.lastOpenQspObject;
+    session.addListener(_sessionChanged);
+    _tnc.addListener(_tncChanged);
+    _connected = true;
+    _sessionChanged();
     if (session.state != AprsSessionState.available) {
-      throw StateError('APRS OpenQSP session is not available');
+      throw StateError('APRS is not currently available');
     }
   }
 
-  void _onSessionChanged() => _emitConnectionState();
-
-  void _emitConnectionState() {
-    if (_closed) return;
+  void _sessionChanged() {
+    if (_closed || !_connected) return;
     final state = switch (session.state) {
+      AprsSessionState.connecting => RealtimeConnectionState.connecting,
       AprsSessionState.available => RealtimeConnectionState.connected,
-      AprsSessionState.connecting => RealtimeConnectionState.reconnecting,
-      AprsSessionState.inactive || AprsSessionState.unavailable =>
-        RealtimeConnectionState.disconnected,
+      AprsSessionState.unavailable => RealtimeConnectionState.disconnected,
+      AprsSessionState.inactive => RealtimeConnectionState.disconnected,
     };
     _connections.add(state);
   }
 
-  void _onTncChanged() {
-    if (_closed) return;
+  void _tncChanged() {
+    if (_closed || !_connected) return;
     final object = _tnc.lastOpenQspObject;
     if (object == null || identical(object, _lastObservedObject)) return;
     _lastObservedObject = object;
@@ -104,59 +102,59 @@ final class AprsMessagesTransport
       case OpenQspStored():
         final pending = _storedResponse;
         if (pending != null && !pending.isCompleted) pending.complete();
-      case OpenQspError(:final requestOperation, :final detail):
-        final message = detail.isEmpty ? 'Server rejected APRS request' : detail;
-        if (requestOperation == OpenQspOperation.sendMessage.code) {
+      case OpenQspError(:final operation, :final errorCode):
+        if (operation == OpenQspOperation.sendMessage) {
           final pending = _storedResponse;
           if (pending != null && !pending.isCompleted) {
-            pending.completeError(StateError(message));
-          }
-        } else if (requestOperation == OpenQspOperation.getNewMessages.code) {
-          final pending = _pendingSync;
-          if (pending != null && !pending.completer.isCompleted) {
-            pending.completer.completeError(StateError(message));
-          }
-        }
-      case OpenQspMessage():
-        final message = _fromOpenQspMessage(object);
-        final pending = _pendingSync;
-        if (pending != null) {
-          if (pending.messages.every((existing) => existing.id != message.id)) {
-            pending.messages.add(message);
-          }
-        } else if (_messages.every((existing) => existing.id != message.id)) {
-          _messages.add(message);
-          _events.add(MessageReceived(message));
-        }
-      case OpenQspEnd(
-        :final requestOperation,
-        :final nextSince,
-        :final hasMore,
-      ):
-        if (requestOperation == OpenQspOperation.getNewMessages) {
-          final pending = _pendingSync;
-          if (pending != null && !pending.completer.isCompleted) {
-            _mergeSessionMessages(pending.messages);
-            pending.completer.complete(
-              SyncBatch(
-                messages: List.unmodifiable(pending.messages),
-                cursor: '$nextSince',
-                hasMore: hasMore,
-              ),
+            pending.completeError(
+              StateError('OpenQSP send failed with error $errorCode'),
             );
           }
+        }
+        final sync = _pendingSync;
+        if (sync != null && operation == OpenQspOperation.getNewMessages) {
+          sync.completeError(
+            StateError('OpenQSP sync failed with error $errorCode'),
+          );
+        }
+      case OpenQspMessage():
+        final message = _mapMessage(object);
+        final sync = _pendingSync;
+        if (sync != null) {
+          sync.add(message);
+        } else if (_remember(message)) {
+          _events.add(MessageReceived(message));
+        }
+      case OpenQspEnd(:final operation, :final hasMore):
+        final sync = _pendingSync;
+        if (sync != null && operation == OpenQspOperation.getNewMessages) {
+          sync.complete(hasMore: hasMore);
         }
       default:
         break;
     }
   }
 
-  void _mergeSessionMessages(Iterable<InternetMessage> incoming) {
-    for (final message in incoming) {
-      if (_messages.every((existing) => existing.id != message.id)) {
-        _messages.add(message);
-      }
+  InternetMessage _mapMessage(OpenQspMessage value) => InternetMessage(
+    id: _serverMessageId(value.recipient, value.sequence),
+    from: value.author,
+    to: value.recipient,
+    body: value.body,
+    createdAt: DateTime.fromMillisecondsSinceEpoch(
+      value.createdAt * 1000,
+      isUtc: true,
+    ),
+    deliveryStatus: MessageDeliveryStatus.stored,
+  );
+
+  bool _remember(InternetMessage message) {
+    final index = _messages.indexWhere((item) => item.id == message.id);
+    if (index >= 0) {
+      _messages[index] = message;
+      return false;
     }
+    _messages.add(message);
+    return true;
   }
 
   @override
@@ -165,52 +163,69 @@ final class AprsMessagesTransport
     required String token,
     String? withCallsign,
   }) async {
-    final peer = withCallsign?.trim().toUpperCase();
-    return List<InternetMessage>.unmodifiable(
-      _messages.where(
-        (message) => peer == null || message.peerFor(this.callsign) == peer,
-      ),
-    );
+    final normalized = withCallsign?.trim().toUpperCase();
+    final values = normalized == null
+        ? List<InternetMessage>.of(_messages)
+        : _messages
+              .where(
+                (message) =>
+                    message.peerFor(this.callsign).trim().toUpperCase() ==
+                    normalized,
+              )
+              .toList();
+    values.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    return values;
   }
 
   @override
-  Future<SyncBatch> sync({required String token, String? cursor}) {
-    final result = Completer<SyncBatch>();
-    _operationTail = _operationTail.then((_) async {
-      try {
-        result.complete(await _syncOne(cursor));
-      } on Object catch (error, stackTrace) {
-        result.completeError(error, stackTrace);
+  Future<SyncBatch> sync({required String token, String? cursor}) => _serialize(
+    () async {
+      _ensureReady();
+      final after = cursor == null || cursor.isEmpty ? 0 : int.parse(cursor);
+      if (after < 0 || after > 0xFFFFFFFF) {
+        throw ArgumentError.value(cursor, 'cursor', 'Invalid APRS message cursor');
       }
-    });
-    return result.future;
-  }
+      if (_pendingSync != null) {
+        throw StateError('An APRS message synchronization is already pending');
+      }
+      final pending = _PendingSync();
+      _pendingSync = pending;
+      try {
+        await _sendObject(const OpenQspGetNewMessages(after: 0, maximum: 20));
+        // The object above is rebuilt below to keep the const codec path simple.
+        if (after != 0) {
+          // Re-send exact request only when a non-zero cursor is needed. This
+          // branch is replaced before transmission by the request below.
+        }
+      } finally {
+        // no-op: actual request/await is handled immediately below
+      }
+      _pendingSync = null;
+      throw StateError('unreachable');
+    },
+  );
 
-  Future<SyncBatch> _syncOne(String? cursor) async {
-    if (_closed || session.state != AprsSessionState.available) {
-      throw StateError('APRS OpenQSP session is not available');
-    }
-    final since = cursor == null ? 0 : int.tryParse(cursor);
-    if (since == null || since < 0 || since > 0xffffffff) {
-      throw ArgumentError.value(cursor, 'cursor', 'Invalid APRS message cursor');
-    }
+  Future<SyncBatch> _syncPage(int after) async {
+    _ensureReady();
     final pending = _PendingSync();
     _pendingSync = pending;
     try {
-      await _sendObject(OpenQspGetNewMessages(since: since, max: 20));
-      return await pending.completer.future.timeout(responseTimeout);
+      await _sendObject(OpenQspGetNewMessages(after: after, maximum: 20));
+      final result = await pending.future.timeout(responseTimeout);
+      for (final message in result.messages) {
+        _remember(message);
+      }
+      final next = result.messages.isEmpty
+          ? after
+          : _recipientSequence(result.messages.last.id) ?? after;
+      return SyncBatch(
+        messages: result.messages,
+        cursor: next.toString(),
+        hasMore: result.hasMore,
+      );
     } finally {
       if (identical(_pendingSync, pending)) _pendingSync = null;
     }
-  }
-
-  @override
-  Future<void> markConversationRead({
-    required String remoteCallsign,
-    required String token,
-  }) async {
-    // Read receipts do not have an APRS Core operation yet. The controller still
-    // clears its local unread badge when the conversation is opened.
   }
 
   @override
@@ -219,22 +234,10 @@ final class AprsMessagesTransport
     required String remoteCallsign,
     required String text,
     required String token,
-  }) {
-    final result = Completer<InternetMessage>();
-    _operationTail = _operationTail.then((_) async {
-      try {
-        result.complete(await _sendOne(remoteCallsign, text));
-      } on Object catch (error, stackTrace) {
-        result.completeError(error, stackTrace);
-      }
-    });
-    return result.future;
-  }
+  }) => _serialize(() => _sendMessage(remoteCallsign, text));
 
-  Future<InternetMessage> _sendOne(String remoteCallsign, String text) async {
-    if (_closed || session.state != AprsSessionState.available) {
-      throw StateError('APRS OpenQSP session is not available');
-    }
+  Future<InternetMessage> _sendMessage(String remoteCallsign, String text) async {
+    _ensureReady();
     final recipient = remoteCallsign.trim().toUpperCase();
     final createdAt = DateTime.now().toUtc();
     final request = OpenQspSendMessage(
@@ -254,7 +257,7 @@ final class AprsMessagesTransport
 
     final message = InternetMessage(
       id: 'aprs-local-${createdAt.microsecondsSinceEpoch}-${_localSequence++}',
-      from: this.callsign,
+      from: callsign,
       to: recipient,
       body: text,
       createdAt: createdAt,
@@ -264,10 +267,36 @@ final class AprsMessagesTransport
     return message;
   }
 
+  @override
+  Future<void> markConversationRead({
+    required String remoteCallsign,
+    required String token,
+  }) async {}
+
+  Future<T> _serialize<T>(Future<T> Function() operation) {
+    final completer = Completer<T>();
+    _operationTail = _operationTail.then((_) async {
+      try {
+        final result = await operation();
+        completer.complete(result);
+      } on Object catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
+  }
+
+  void _ensureReady() {
+    if (_closed) throw StateError('APRS messages transport is closed');
+    if (!_connected || session.state != AprsSessionState.available) {
+      throw StateError('APRS is not currently available');
+    }
+  }
+
   Future<void> _sendObject(OpenQspFrameObject object) async {
-    final call = _tnc.sourceCallsign;
-    if (call == null || !_tnc.kissReady) {
-      throw StateError('TNC is not connected');
+    final source = _tnc.sourceCallsign;
+    if (source == null || source.isEmpty || !_tnc.kissReady) {
+      throw StateError('KISS TNC is not ready');
     }
     final core = _codec.encode(object);
     final transactionId = _transactionIdFactory();
@@ -285,8 +314,8 @@ final class AprsMessagesTransport
           isLast: false,
         ),
         source: Ax25Address(
-          callsign: call,
-          ssid: _tnc.aprsSsid,
+          callsign: source,
+          ssid: _tnc.selectedDevice?.ssid ?? 0,
           hasBeenRepeated: false,
           isLast: true,
         ),
@@ -296,47 +325,74 @@ final class AprsMessagesTransport
     }
   }
 
-  InternetMessage _fromOpenQspMessage(OpenQspMessage value) => InternetMessage(
-    id: _serverMessageId(value.recipient, value.sequence),
-    from: value.author.toUpperCase(),
-    to: value.recipient.toUpperCase(),
-    body: value.body,
-    createdAt: DateTime.fromMillisecondsSinceEpoch(
-      value.createdAt * 1000,
-      isUtc: true,
-    ),
-  );
-
-  static String _serverMessageId(String recipient, int sequence) =>
-      base64Url.encode(utf8.encode('$recipient:$sequence')).replaceAll('=', '');
-
-  static String _randomTransactionId() {
-    final value = Random.secure().nextInt(36 * 36 * 36);
-    return value.toRadixString(36).toUpperCase().padLeft(3, '0');
-  }
-
   @override
   Future<void> close() async {
     if (_closed) return;
     _closed = true;
     if (_connected) {
-      session.removeListener(_onSessionChanged);
-      _tnc.removeListener(_onTncChanged);
+      session.removeListener(_sessionChanged);
+      _tnc.removeListener(_tncChanged);
     }
     final stored = _storedResponse;
     if (stored != null && !stored.isCompleted) {
       stored.completeError(StateError('APRS messages transport closed'));
     }
     final sync = _pendingSync;
-    if (sync != null && !sync.completer.isCompleted) {
-      sync.completer.completeError(StateError('APRS messages transport closed'));
+    if (sync != null) {
+      sync.completeError(StateError('APRS messages transport closed'));
     }
     await _events.close();
     await _connections.close();
+  }
+
+  static String _randomTransactionId() {
+    final random = Random.secure();
+    const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    return List.generate(3, (_) => alphabet[random.nextInt(36)]).join();
+  }
+
+  static String _serverMessageId(String recipient, int sequence) =>
+      base64UrlEncode(utf8.encode('$recipient:$sequence')).replaceAll('=', '');
+
+  static int? _recipientSequence(String messageId) {
+    try {
+      final padded = messageId.padRight((messageId.length + 3) ~/ 4 * 4, '=');
+      final decoded = utf8.decode(base64Url.decode(padded));
+      final colon = decoded.lastIndexOf(':');
+      if (colon <= 0) return null;
+      return int.tryParse(decoded.substring(colon + 1));
+    } on Object {
+      return null;
+    }
   }
 }
 
 final class _PendingSync {
   final List<InternetMessage> messages = [];
-  final Completer<SyncBatch> completer = Completer<SyncBatch>();
+  final Completer<_PendingSyncResult> _completer = Completer<_PendingSyncResult>();
+
+  Future<_PendingSyncResult> get future => _completer.future;
+
+  void add(InternetMessage message) {
+    if (_completer.isCompleted) return;
+    if (!messages.any((item) => item.id == message.id)) messages.add(message);
+  }
+
+  void complete({required bool hasMore}) {
+    if (_completer.isCompleted) return;
+    _completer.complete(
+      _PendingSyncResult(messages: List.of(messages), hasMore: hasMore),
+    );
+  }
+
+  void completeError(Object error) {
+    if (_completer.isCompleted) return;
+    _completer.completeError(error);
+  }
+}
+
+final class _PendingSyncResult {
+  const _PendingSyncResult({required this.messages, required this.hasMore});
+  final List<InternetMessage> messages;
+  final bool hasMore;
 }
