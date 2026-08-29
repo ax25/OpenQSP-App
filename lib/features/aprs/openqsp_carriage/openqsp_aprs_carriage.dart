@@ -223,7 +223,7 @@ final class OpenQspAprsReassembler {
     if (assembly == null) {
       if (_assemblies.length >= maxEntries) {
         final oldest = _assemblies.entries.reduce(
-          (a, b) => a.value.createdAt.isAfter(b.value.createdAt) ? b : a,
+          (a, b) => a.value.lastUpdated.isAfter(b.value.lastUpdated) ? b : a,
         );
         _assemblies.remove(oldest.key);
       }
@@ -256,7 +256,7 @@ final class OpenQspAprsReassembler {
 
   void _discardExpired(DateTime now) {
     _assemblies.removeWhere(
-      (_, assembly) => now.difference(assembly.lastUpdated) > ttl,
+      (_, assembly) => now.difference(assembly.lastUpdated) >= ttl,
     );
   }
 }
@@ -277,9 +277,8 @@ final class _AssemblyKey {
 }
 
 final class _Assembly {
-  _Assembly(this.total, DateTime now) : createdAt = now, lastUpdated = now;
+  _Assembly(this.total, this.lastUpdated);
   final int total;
-  final DateTime createdAt;
   DateTime lastUpdated;
   final Map<int, String> parts = {};
 }

@@ -205,6 +205,38 @@ void main() {
       }
     });
 
+    test('expires partial assembly exactly at the TTL boundary', () {
+      final fragments = fragmentFrame(multiFrame, 'ABC');
+      final reassembler = OpenQspAprsReassembler(
+        ttl: const Duration(seconds: 120),
+      );
+      reassembler.add(peer: 'P1', fragment: fragments[0], now: start);
+      reassembler.add(
+        peer: 'P1',
+        fragment: fragments[1],
+        now: start.add(const Duration(milliseconds: 119999)),
+      );
+
+      // Exactly 120 seconds after the last activity, the partial assembly
+      // expires and this fragment starts a new one instead of completing it.
+      expect(
+        reassembler.add(
+          peer: 'P1',
+          fragment: fragments[2],
+          now: start.add(const Duration(milliseconds: 239999)),
+        ),
+        isNull,
+      );
+      expect(
+        reassembler.add(
+          peer: 'P1',
+          fragment: fragments[3],
+          now: start.add(const Duration(milliseconds: 239999)),
+        ),
+        isNull,
+      );
+    });
+
     test('capacity evicts oldest active assembly', () {
       final fragments = fragmentFrame(multiFrame, 'ABC');
       final reassembler = OpenQspAprsReassembler(maxEntries: 2);
@@ -214,6 +246,58 @@ void main() {
       for (final fragment in fragments.skip(1)) {
         expect(
           reassembler.add(peer: 'OLD', fragment: fragment, now: start.add(const Duration(seconds: 3))),
+          isNull,
+        );
+      }
+    });
+
+    test('capacity eviction is LRU by last activity', () {
+      final fragments = fragmentFrame(multiFrame, 'ABC');
+      final reassembler = OpenQspAprsReassembler(maxEntries: 2);
+      reassembler.add(peer: 'A', fragment: fragments[0], now: start);
+      reassembler.add(
+        peer: 'B',
+        fragment: fragments[0],
+        now: start.add(const Duration(seconds: 1)),
+      );
+      reassembler.add(
+        peer: 'A',
+        fragment: fragments[1],
+        now: start.add(const Duration(seconds: 2)),
+      );
+      reassembler.add(
+        peer: 'C',
+        fragment: fragments[0],
+        now: start.add(const Duration(seconds: 3)),
+      );
+
+      // A was refreshed at t=2, so creating C evicts B rather than A.
+      expect(
+        reassembler.add(
+          peer: 'A',
+          fragment: fragments[2],
+          now: start.add(const Duration(seconds: 4)),
+        ),
+        isNull,
+      );
+      expect(
+        reassembler.add(
+          peer: 'A',
+          fragment: fragments[3],
+          now: start.add(const Duration(seconds: 5)),
+        ),
+        multiFrame,
+      );
+
+      // B was evicted, so its remaining fragments cannot complete the old
+      // assembly and instead begin a new partial assembly.
+      for (final fragment in fragments.skip(1)) {
+        expect(
+          reassembler.add(
+            peer: 'B',
+            fragment: fragment,
+            now: start.add(const Duration(seconds: 6)),
+          ),
           isNull,
         );
       }
