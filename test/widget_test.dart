@@ -154,7 +154,7 @@ void main() {
         matching: find.byType(PopupMenuItem<String>),
       ),
     );
-    expect(aprs.enabled, isFalse);
+    expect(aprs.enabled, isTrue);
     expect(winlink.enabled, isFalse);
   });
 
