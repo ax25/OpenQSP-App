@@ -7,8 +7,10 @@ import 'kiss_frame.dart';
 
 /// Bridges the byte-only Bluetooth service to KISS, without interpreting data.
 final class KissTransport {
-  KissTransport(this._bluetooth, {KissEncoder encoder = const KissEncoder()})
-    : _encoder = encoder {
+  KissTransport(
+    this._bluetooth, {
+    this._encoder = const KissEncoder(),
+  }) {
     _bytesSubscription = _bluetooth.incomingBytes.listen(_decoder.add);
   }
 
