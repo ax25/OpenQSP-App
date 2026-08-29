@@ -93,9 +93,16 @@ class _MessagesScreenState extends State<MessagesScreen> {
         actions: [
           IconButton(
             key: const Key('getNewMessages'),
-            onPressed: controller.reconcile,
-            tooltip: 'Get new messages',
-            icon: const Icon(Icons.sync),
+            onPressed: controller.synchronizing ? null : controller.reconcile,
+            tooltip: controller.synchronizing
+                ? 'Getting new messages…'
+                : 'Get new messages',
+            icon: controller.synchronizing
+                ? const SizedBox.square(
+                    dimension: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.sync),
           ),
         ],
       ),
