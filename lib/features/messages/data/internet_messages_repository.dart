@@ -34,6 +34,9 @@ class InternetMessagesRepository implements MessagesRepository {
   final Duration timeout;
   final String Function() _idempotencyKeyFactory;
 
+  @override
+  String get syncCursorKey => 'internet';
+
   Map<String, String> _headers(String token) => {
     'Authorization': 'Bearer $token',
     'Content-Type': 'application/json',
@@ -52,7 +55,10 @@ class InternetMessagesRepository implements MessagesRepository {
       if (withCallsign != null) query['with'] = withCallsign.toUpperCase();
       if (cursor != null) query['cursor'] = cursor;
       final response = await _httpClient
-          .get(_messagesUri.replace(queryParameters: query), headers: _headers(token))
+          .get(
+            _messagesUri.replace(queryParameters: query),
+            headers: _headers(token),
+          )
           .timeout(timeout);
       final body = _decode(response);
       result.addAll(_parseMessages(body['messages']));
@@ -113,9 +119,13 @@ class InternetMessagesRepository implements MessagesRepository {
     if (nextCursor is! String) {
       throw const FormatException('Missing sync cursor');
     }
+    final parsed = _parseMessages(body['messages']);
     return SyncBatch(
-      messages: _parseMessages(body['messages']),
+      messages: parsed,
       cursor: nextCursor,
+      // /sync currently returns at most 200 changes. Exactly 200 may be the
+      // final page; an extra empty request is harmless and captures high-water.
+      hasMore: parsed.length == 200,
     );
   }
 
