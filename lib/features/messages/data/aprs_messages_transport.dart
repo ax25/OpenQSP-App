@@ -212,7 +212,7 @@ final class AprsMessagesTransport
       (_) {
         if (identical(_syncInFlight, future)) _syncInFlight = null;
       },
-      onError: (Object _, StackTrace __) {
+      onError: (Object _, StackTrace _) {
         if (identical(_syncInFlight, future)) _syncInFlight = null;
       },
     );
