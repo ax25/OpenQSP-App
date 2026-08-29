@@ -45,7 +45,9 @@ final class AprsMessagesTransport
       StreamController<RealtimeConnectionState>.broadcast();
   final List<InternetMessage> _messages = [];
   Future<void> _operationTail = Future<void>.value();
+  Future<SyncBatch>? _syncInFlight;
   OpenQspFrameObject? _lastObservedObject;
+  int _lastObservedOpenQspFragments = 0;
   Completer<void>? _storedResponse;
   _PendingSync? _pendingSync;
   int _localSequence = 0;
@@ -72,6 +74,7 @@ final class AprsMessagesTransport
     if (!_connected) {
       _connected = true;
       _lastObservedObject = _tnc.lastOpenQspObject;
+      _lastObservedOpenQspFragments = _tnc.openQspFragmentsRx;
       session.addListener(_onSessionChanged);
       _tnc.addListener(_onTncChanged);
     }
@@ -96,6 +99,17 @@ final class AprsMessagesTransport
 
   void _onTncChanged() {
     if (_closed) return;
+
+    // GET_NEW_MESSAGES can legitimately take minutes over RF. Treat the
+    // response timeout as an inactivity timeout and refresh it whenever a
+    // valid OpenQSP Q1 fragment arrives, even before a complete Core frame can
+    // be reassembled.
+    final fragmentCount = _tnc.openQspFragmentsRx;
+    if (fragmentCount != _lastObservedOpenQspFragments) {
+      _lastObservedOpenQspFragments = fragmentCount;
+      _pendingSync?.touch(responseTimeout);
+    }
+
     final object = _tnc.lastOpenQspObject;
     if (object == null || identical(object, _lastObservedObject)) return;
     _lastObservedObject = object;
@@ -178,7 +192,12 @@ final class AprsMessagesTransport
 
   @override
   Future<SyncBatch> sync({required String token, String? cursor}) {
+    final active = _syncInFlight;
+    if (active != null) return active;
+
     final result = Completer<SyncBatch>();
+    final future = result.future;
+    _syncInFlight = future;
     _operationTail = _operationTail.then((_) async {
       try {
         result.complete(await _syncOne(cursor));
@@ -186,7 +205,15 @@ final class AprsMessagesTransport
         result.completeError(error, stackTrace);
       }
     });
-    return result.future;
+    future.then(
+      (_) {
+        if (identical(_syncInFlight, future)) _syncInFlight = null;
+      },
+      onError: (Object _, StackTrace __) {
+        if (identical(_syncInFlight, future)) _syncInFlight = null;
+      },
+    );
+    return future;
   }
 
   Future<SyncBatch> _syncOne(String? cursor) async {
@@ -199,10 +226,12 @@ final class AprsMessagesTransport
     }
     final pending = _PendingSync();
     _pendingSync = pending;
+    pending.touch(responseTimeout);
     try {
       await _sendObject(OpenQspGetNewMessages(since: since, max: 20));
-      return await pending.completer.future.timeout(responseTimeout);
+      return await pending.completer.future;
     } finally {
+      pending.cancelTimeout();
       if (identical(_pendingSync, pending)) _pendingSync = null;
     }
   }
@@ -331,6 +360,7 @@ final class AprsMessagesTransport
       stored.completeError(StateError('APRS messages transport closed'));
     }
     final sync = _pendingSync;
+    sync?.cancelTimeout();
     if (sync != null && !sync.completer.isCompleted) {
       sync.completer.completeError(StateError('APRS messages transport closed'));
     }
@@ -342,4 +372,22 @@ final class AprsMessagesTransport
 final class _PendingSync {
   final List<InternetMessage> messages = [];
   final Completer<SyncBatch> completer = Completer<SyncBatch>();
+  Timer? _timeout;
+
+  void touch(Duration timeout) {
+    if (completer.isCompleted) return;
+    _timeout?.cancel();
+    _timeout = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.completeError(
+          TimeoutException('APRS message sync inactive', timeout),
+        );
+      }
+    });
+  }
+
+  void cancelTimeout() {
+    _timeout?.cancel();
+    _timeout = null;
+  }
 }
