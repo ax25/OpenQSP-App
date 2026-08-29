@@ -105,9 +105,15 @@ class ConversationSummary {
 }
 
 class SyncBatch {
-  const SyncBatch({required this.messages, required this.cursor});
+  const SyncBatch({
+    required this.messages,
+    required this.cursor,
+    this.hasMore = false,
+  });
+
   final List<InternetMessage> messages;
   final String cursor;
+  final bool hasMore;
 }
 
 sealed class MessagingEvent {

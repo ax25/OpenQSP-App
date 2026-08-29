@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/core/openqsp_protocol/openqsp_codec.dart';
 import 'package:openqsp_app/core/openqsp_protocol/openqsp_models.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_operation.dart';
 import 'package:openqsp_app/features/aprs/aprs/aprs_message_encoder.dart';
 import 'package:openqsp_app/features/aprs/application/aprs_session_controller.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
@@ -140,6 +141,171 @@ void main() {
     expect(received.message.from, 'EA3ABC');
     expect(received.message.to, 'EA3GNU');
     expect(received.message.body, 'mensaje recibido');
+  });
+
+  test('sync collects GET_NEW_MESSAGES page until END', () async {
+    final pending = transport.sync(token: '', cursor: '6');
+    await Future<void>.delayed(Duration.zero);
+    expect(service.sentBytes, isNotEmpty);
+
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 7,
+        createdAt: 1700000000,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'new seven',
+      ),
+      transactionId: '010',
+    );
+    _injectObject(
+      service,
+      const OpenQspEnd(
+        requestOperation: OpenQspOperation.getNewMessages,
+        returnedCount: 1,
+        nextSince: 7,
+        hasMore: false,
+      ),
+      transactionId: '011',
+    );
+
+    final batch = await pending;
+    expect(batch.cursor, '7');
+    expect(batch.hasMore, isFalse);
+    expect(batch.messages.single.body, 'new seven');
+  });
+
+  test('complete messages remain visible when sync times out before END', () async {
+    final received = transport.events
+        .where((value) => value is MessageReceived)
+        .cast<MessageReceived>()
+        .take(2)
+        .toList();
+    final pending = transport.sync(token: '', cursor: '0');
+    await Future<void>.delayed(Duration.zero);
+
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 1,
+        createdAt: 1700000000,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'first complete message',
+      ),
+      transactionId: '020',
+    );
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 2,
+        createdAt: 1700000001,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'second complete message',
+      ),
+      transactionId: '021',
+    );
+
+    final events = await received;
+    expect(events.map((event) => event.message.body), [
+      'first complete message',
+      'second complete message',
+    ]);
+
+    final history = await transport.messages(callsign: 'EA3GNU', token: '');
+    expect(history.map((message) => message.body), [
+      'first complete message',
+      'second complete message',
+    ]);
+    await expectLater(pending, throwsA(isA<TimeoutException>()));
+  });
+
+  test('sync inactivity timeout is refreshed by incoming Q1 traffic', () async {
+    final slowTransport = AprsMessagesTransport(
+      session: session,
+      callsign: 'EA3GNU',
+      responseTimeout: const Duration(milliseconds: 80),
+      transactionIdFactory: () => 'DEF',
+    );
+    await slowTransport.connect(callsign: 'EA3GNU', token: '');
+    addTearDown(slowTransport.close);
+
+    final pending = slowTransport.sync(token: '', cursor: '0');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 1,
+        createdAt: 1700000000,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'keeps sync alive',
+      ),
+      transactionId: '030',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    _injectObject(
+      service,
+      const OpenQspEnd(
+        requestOperation: OpenQspOperation.getNewMessages,
+        returnedCount: 1,
+        nextSince: 1,
+        hasMore: false,
+      ),
+      transactionId: '031',
+    );
+
+    final batch = await pending;
+    expect(batch.cursor, '1');
+  });
+
+  test('simultaneous sync calls share one APRS request', () async {
+    final first = transport.sync(token: '', cursor: '6');
+    final second = transport.sync(token: '', cursor: '6');
+    await Future<void>.delayed(Duration.zero);
+
+    expect(identical(first, second), isTrue);
+    expect(service.sentBytes, hasLength(1));
+
+    _injectObject(
+      service,
+      const OpenQspEnd(
+        requestOperation: OpenQspOperation.getNewMessages,
+        returnedCount: 0,
+        nextSince: 6,
+        hasMore: false,
+      ),
+      transactionId: '040',
+    );
+
+    await first;
+    await second;
+  });
+
+  test('connection state is emitted only when APRS state changes', () async {
+    final extraTransport = AprsMessagesTransport(
+      session: session,
+      callsign: 'EA3GNU',
+      responseTimeout: const Duration(seconds: 1),
+      transactionIdFactory: () => 'GHI',
+    );
+    final states = <RealtimeConnectionState>[];
+    final subscription = extraTransport.connectionStates.listen(states.add);
+    addTearDown(subscription.cancel);
+    addTearDown(extraTransport.close);
+
+    await extraTransport.connect(callsign: 'EA3GNU', token: '');
+    await Future<void>.delayed(Duration.zero);
+    expect(states, [RealtimeConnectionState.connected]);
+
+    await tnc.setAprsSsid(0);
+    await tnc.setAprsSsid(0);
+    await tnc.setAprsSsid(0);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(states, [RealtimeConnectionState.connected]);
   });
 }
 

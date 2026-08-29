@@ -22,6 +22,19 @@ abstract interface class MessagesRepository {
   Future<SyncBatch> sync({required String token, String? cursor});
 }
 
+/// Optional capability for repositories whose incremental cursor is not the
+/// Internet `/sync` cursor namespace.
+abstract interface class MessagesSyncCursorNamespace {
+  String get syncCursorKey;
+}
+
+String messagesSyncCursorKey(MessagesRepository repository) {
+  if (repository is MessagesSyncCursorNamespace) {
+    return (repository as MessagesSyncCursorNamespace).syncCursorKey;
+  }
+  return 'internet';
+}
+
 abstract interface class MessagesRealtimeClient {
   Stream<MessagingEvent> get events;
   Stream<RealtimeConnectionState> get connectionStates;

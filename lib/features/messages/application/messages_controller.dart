@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../data/local_messages_store.dart';
 import '../data/messages_transport.dart';
 import '../domain/message_models.dart';
 
@@ -11,25 +12,30 @@ class MessagesController extends ChangeNotifier {
     required this.token,
     required this.repository,
     required this.realtime,
+    LocalMessagesStore? localStore,
     this.onAuthenticationRequired,
-  });
+  }) : localStore = localStore ?? PreferencesLocalMessagesStore();
 
   final String callsign;
   final String token;
   final MessagesRepository repository;
   final MessagesRealtimeClient realtime;
+  final LocalMessagesStore localStore;
   final Future<void> Function()? onAuthenticationRequired;
   final List<ConversationSummary> conversations = [];
   final Map<String, InternetMessage> _messagesById = {};
   final Map<String, int> _unreadByPeer = {};
   StreamSubscription<MessagingEvent>? _events;
   StreamSubscription<RealtimeConnectionState>? _connections;
-  String? _syncCursor;
+  Future<void>? _reconcileInFlight;
   bool _hasConnected = false;
   bool loading = false;
   String? error;
   String? openRemoteCallsign;
   RealtimeConnectionState connectionState = RealtimeConnectionState.connecting;
+
+  String get _syncCursorKey => messagesSyncCursorKey(repository);
+  bool get synchronizing => _reconcileInFlight != null;
 
   List<InternetMessage> historyFor(String remote) {
     final peer = _key(remote);
@@ -41,20 +47,65 @@ class MessagesController extends ChangeNotifier {
   }
 
   Future<void> start() async {
-    _events ??= realtime.events.listen(_applyEvent, onError: (_) {
-      connectionState = RealtimeConnectionState.disconnected;
-      notifyListeners();
-    });
+    await _loadLocal();
+    _events ??= realtime.events.listen(
+      (event) => unawaited(_applyEvent(event)),
+      onError: (_) {
+        connectionState = RealtimeConnectionState.disconnected;
+        notifyListeners();
+      },
+    );
     _connections ??= realtime.connectionStates.listen(_connectionChanged);
     try {
       await realtime.connect(callsign: callsign, token: token);
     } on Object {
       connectionState = RealtimeConnectionState.disconnected;
+      notifyListeners();
+      return;
     }
-    await loadConversations();
+    await _bootstrapLocalHistoryIfNeeded();
+    await reconcile();
+  }
+
+  Future<void> _loadLocal() async {
+    loading = true;
+    error = null;
+    notifyListeners();
+    try {
+      _messagesById.clear();
+      _mergeAll(await localStore.messages(callsign));
+    } on Object catch (value) {
+      error = value.toString();
+    } finally {
+      loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _bootstrapLocalHistoryIfNeeded() async {
+    if (_messagesById.isNotEmpty ||
+        await localStore.cursor(callsign, _syncCursorKey) != null) {
+      return;
+    }
+    try {
+      final historical = await repository.messages(
+        callsign: callsign,
+        token: token,
+      );
+      if (historical.isEmpty) return;
+      await localStore.upsertAll(callsign, historical);
+      _mergeAll(historical);
+      notifyListeners();
+    } on Object {
+      // Incremental sync below is authoritative. APRS deliberately has no
+      // complete sent-history operation, and offline local history remains usable.
+    }
   }
 
   void _connectionChanged(RealtimeConnectionState state) {
+    final previous = connectionState;
+    if (previous == state) return;
+
     connectionState = state;
     notifyListeners();
     if (state == RealtimeConnectionState.authenticationRequired) {
@@ -71,31 +122,42 @@ class MessagesController extends ChangeNotifier {
   }
 
   Future<void> loadConversations() async {
-    loading = true;
-    error = null;
-    notifyListeners();
-    try {
-      final loaded = await repository.messages(
-        callsign: callsign,
-        token: token,
-      );
-      _mergeAll(loaded);
-      final initialSync = await repository.sync(token: token);
-      _syncCursor = initialSync.cursor;
-      _mergeAll(initialSync.messages);
-    } on Object catch (value) {
-      error = value.toString();
-    } finally {
-      loading = false;
-      notifyListeners();
-    }
+    await _loadLocal();
+    await _bootstrapLocalHistoryIfNeeded();
+    await reconcile();
   }
 
-  Future<void> reconcile() async {
+  Future<void> reconcile() {
+    final active = _reconcileInFlight;
+    if (active != null) return active;
+    final future = _reconcile();
+    _reconcileInFlight = future;
+    notifyListeners();
+    return future.whenComplete(() {
+      if (identical(_reconcileInFlight, future)) {
+        _reconcileInFlight = null;
+        notifyListeners();
+      }
+    });
+  }
+
+  Future<void> _reconcile() async {
     try {
-      final batch = await repository.sync(token: token, cursor: _syncCursor);
-      _syncCursor = batch.cursor;
-      _mergeAll(batch.messages);
+      var cursor = await localStore.cursor(callsign, _syncCursorKey);
+      var pages = 0;
+      bool hasMore;
+      do {
+        final batch = await repository.sync(token: token, cursor: cursor);
+        await localStore.upsertAll(callsign, batch.messages);
+        _mergeAll(batch.messages);
+        cursor = batch.cursor;
+        await localStore.setCursor(callsign, _syncCursorKey, cursor);
+        hasMore = batch.hasMore;
+        pages++;
+        if (pages > 10000) {
+          throw StateError('Message synchronization exceeded page limit');
+        }
+      } while (hasMore);
       error = null;
       notifyListeners();
     } on Object catch (value) {
@@ -108,20 +170,20 @@ class MessagesController extends ChangeNotifier {
     final normalized = _key(remote);
     openRemoteCallsign = normalized;
     _unreadByPeer[normalized] = 0;
-    notifyListeners();
-    final loaded = await repository.messages(
-      callsign: callsign,
-      token: token,
-      withCallsign: normalized,
-    );
-    _mergeAll(loaded);
-    await repository.markConversationRead(
-      remoteCallsign: normalized,
-      token: token,
-    );
-    _unreadByPeer[normalized] = 0;
     _rebuildConversations();
     notifyListeners();
+    try {
+      await repository.markConversationRead(
+        remoteCallsign: normalized,
+        token: token,
+      );
+      _unreadByPeer[normalized] = 0;
+      _rebuildConversations();
+      notifyListeners();
+    } on Object {
+      // Local history remains available. A future transport sync/read operation
+      // can retry the server-side read cursor.
+    }
   }
 
   void closeConversation() => openRemoteCallsign = null;
@@ -142,14 +204,15 @@ class MessagesController extends ChangeNotifier {
       text: trimmed,
       token: token,
     );
+    await localStore.upsert(callsign, message);
     _merge(message);
     notifyListeners();
   }
 
-  void _applyEvent(MessagingEvent event) {
+  Future<void> _applyEvent(MessagingEvent event) async {
     switch (event) {
       case MessageReceived(:final message):
-        final isNew = !_messagesById.containsKey(message.id);
+        final isNew = !_containsLogicalMessage(message);
         final peer = _key(message.peerFor(callsign));
         if (isNew &&
             message.directionFor(callsign) == MessageDirection.received) {
@@ -159,19 +222,22 @@ class MessagesController extends ChangeNotifier {
             _unreadByPeer[peer] = (_unreadByPeer[peer] ?? 0) + 1;
           }
         }
+        await localStore.upsert(callsign, message);
         _merge(message);
       case MessageDelivered(:final messageId, :final deliveredAt):
         final current = _messagesById[messageId];
         if (current != null &&
             current.deliveryStatus != MessageDeliveryStatus.read) {
-          _messagesById[messageId] = current.copyWith(
+          final updated = current.copyWith(
             deliveryStatus: MessageDeliveryStatus.delivered,
             deliveredAt: deliveredAt,
           );
+          _messagesById[messageId] = updated;
+          await localStore.upsert(callsign, updated);
           _rebuildConversations();
         }
       case MessageRead(:final peer, :final lastReadMessageId):
-        _applyReadCursor(_key(peer), lastReadMessageId);
+        await _applyReadCursor(_key(peer), lastReadMessageId);
     }
     notifyListeners();
   }
@@ -183,24 +249,28 @@ class MessagesController extends ChangeNotifier {
       _rebuildConversations();
       notifyListeners();
     } on Object {
-      // Reconciliation or a later open will retry the durable read update.
+      // A later transport sync/open can retry the durable read update.
     }
   }
 
-  void _applyReadCursor(String peer, String lastReadMessageId) {
+  Future<void> _applyReadCursor(String peer, String lastReadMessageId) async {
     final history = historyFor(peer);
     final target = history.indexWhere((message) => message.id == lastReadMessageId);
     if (target < 0) {
       unawaited(reconcile());
       return;
     }
+    final changed = <InternetMessage>[];
     for (var index = 0; index <= target; index++) {
       final message = history[index];
       if (message.directionFor(callsign) != MessageDirection.sent) continue;
-      _messagesById[message.id] = message.copyWith(
+      final updated = message.copyWith(
         deliveryStatus: MessageDeliveryStatus.read,
       );
+      _messagesById[message.id] = updated;
+      changed.add(updated);
     }
+    await localStore.upsertAll(callsign, changed);
     _rebuildConversations();
   }
 
@@ -216,14 +286,46 @@ class MessagesController extends ChangeNotifier {
     _rebuildConversations();
   }
 
+  bool _containsLogicalMessage(InternetMessage message) {
+    if (_messagesById.containsKey(message.id)) return true;
+    if (message.id.startsWith('aprs-local-')) return false;
+    return _messagesById.values.any(
+      (existing) =>
+          existing.id.startsWith('aprs-local-') &&
+          _sameLogicalMessage(existing, message),
+    );
+  }
+
   void _mergeOne(InternetMessage message) {
-    final existing = _messagesById[message.id];
+    var existing = _messagesById[message.id];
+    if (existing == null && !message.id.startsWith('aprs-local-')) {
+      String? provisionalId;
+      for (final entry in _messagesById.entries) {
+        if (entry.key.startsWith('aprs-local-') &&
+            _sameLogicalMessage(entry.value, message)) {
+          provisionalId = entry.key;
+          existing = entry.value;
+          break;
+        }
+      }
+      if (provisionalId != null) _messagesById.remove(provisionalId);
+    }
     if (existing == null ||
         _statusRank(message.deliveryStatus) >=
             _statusRank(existing.deliveryStatus)) {
       _messagesById[message.id] = message;
     }
   }
+
+  static bool _sameLogicalMessage(
+    InternetMessage first,
+    InternetMessage second,
+  ) =>
+      first.from == second.from &&
+      first.to == second.to &&
+      first.body == second.body &&
+      first.createdAt.millisecondsSinceEpoch ~/ 1000 ==
+          second.createdAt.millisecondsSinceEpoch ~/ 1000;
 
   int _statusRank(MessageDeliveryStatus status) => switch (status) {
     MessageDeliveryStatus.stored => 0,
