@@ -124,10 +124,14 @@ class _OpenQspAppState extends State<OpenQspApp> {
           return child ?? const SizedBox.shrink();
         }
         return LayoutBuilder(
-          builder: (context, constraints) => Column(
+          builder: (context, constraints) => Stack(
+            fit: StackFit.expand,
             children: [
-              Expanded(child: child),
-              SizedBox(
+              child,
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
                 height: constraints.maxHeight * 0.25,
                 child: AprsConsole(controller: controller),
               ),
