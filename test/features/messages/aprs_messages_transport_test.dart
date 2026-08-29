@@ -34,7 +34,7 @@ class _MemoryStorage implements BluetoothTncStorage {
 
 class _FakeTncService implements BluetoothTncService {
   final bytes = StreamController<List<int>>.broadcast();
-  final losses = StreamController<int>>.broadcast();
+  final losses = StreamController<int>.broadcast();
   final List<List<int>> sentBytes = [];
   int? _activeConnectionId;
 
