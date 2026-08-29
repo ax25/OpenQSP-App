@@ -88,7 +88,9 @@ class _AprsConsoleState extends State<AprsConsole> {
           .where((part) => part.isNotEmpty)
           .map((part) => int.parse(part, radix: 16))
           .toList();
-      if (encoded.length < 3 || encoded.first != kissFend || encoded.last != kissFend) {
+      if (encoded.length < 3 ||
+          encoded.first != kissFend ||
+          encoded.last != kissFend) {
         return null;
       }
       final unescaped = <int>[];
@@ -96,7 +98,13 @@ class _AprsConsoleState extends State<AprsConsole> {
         final byte = encoded[i];
         if (byte == kissFesc && i + 1 < encoded.length - 1) {
           final escaped = encoded[++i];
-          unescaped.add(escaped == kissTfend ? kissFend : escaped == kissTfesc ? kissFesc : escaped);
+          unescaped.add(
+            escaped == kissTfend
+                ? kissFend
+                : escaped == kissTfesc
+                ? kissFesc
+                : escaped,
+          );
         } else {
           unescaped.add(byte);
         }
@@ -114,45 +122,72 @@ class _AprsConsoleState extends State<AprsConsole> {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest,
-        border: Border(top: BorderSide(color: colors.outlineVariant)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Text('APRS console', style: Theme.of(context).textTheme.labelLarge),
-                const Spacer(),
-                Text('RX unique: ${_seenRx.length}   TX unique: ${_seenTx.length}'),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Expanded(
-              child: _entries.isEmpty
-                  ? const Align(
-                      alignment: Alignment.topLeft,
-                      child: Text('No OpenQSP APRS traffic yet'),
-                    )
-                  : ListView.builder(
-                      reverse: false,
-                      itemCount: _entries.length,
-                      itemBuilder: (context, index) => Padding(
-                        padding: const EdgeInsets.only(bottom: 4),
-                        child: SelectableText(
-                          _entries[index],
-                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            fontFamily: 'monospace',
+    final textTheme = Theme.of(context).textTheme;
+    return Material(
+      color: colors.surfaceContainerHighest,
+      elevation: 6,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: colors.outlineVariant)),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'APRS console',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.labelLarge,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      'RX ${_seenRx.length} · TX ${_seenTx.length}',
+                      maxLines: 1,
+                      textAlign: TextAlign.end,
+                      overflow: TextOverflow.ellipsis,
+                      style: textTheme.labelSmall,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Expanded(
+                child: _entries.isEmpty
+                    ? Align(
+                        alignment: Alignment.topLeft,
+                        child: Text(
+                          'No OpenQSP APRS traffic yet',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: textTheme.bodySmall,
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: _entries.length,
+                        itemBuilder: (context, index) => Padding(
+                          padding: const EdgeInsets.only(bottom: 3),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: SelectableText(
+                              _entries[index],
+                              style: textTheme.bodySmall?.copyWith(
+                                fontFamily: 'monospace',
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ),
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
