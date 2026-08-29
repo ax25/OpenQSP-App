@@ -175,6 +175,52 @@ void main() {
     expect(batch.hasMore, isFalse);
     expect(batch.messages.single.body, 'new seven');
   });
+
+  test('complete messages remain visible when sync times out before END', () async {
+    final received = transport.events
+        .where((value) => value is MessageReceived)
+        .cast<MessageReceived>()
+        .take(2)
+        .toList();
+    final pending = transport.sync(token: '', cursor: '0');
+    await Future<void>.delayed(Duration.zero);
+
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 1,
+        createdAt: 1700000000,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'first complete message',
+      ),
+      transactionId: '020',
+    );
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 2,
+        createdAt: 1700000001,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'second complete message',
+      ),
+      transactionId: '021',
+    );
+
+    final events = await received;
+    expect(events.map((event) => event.message.body), [
+      'first complete message',
+      'second complete message',
+    ]);
+
+    final history = await transport.messages(callsign: 'EA3GNU', token: '');
+    expect(history.map((message) => message.body), [
+      'first complete message',
+      'second complete message',
+    ]);
+    await expectLater(pending, throwsA(isA<TimeoutException>()));
+  });
 }
 
 void _injectObject(
