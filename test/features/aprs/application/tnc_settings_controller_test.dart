@@ -396,12 +396,16 @@ void main() {
     await controller.setAprsSsid(5);
     await controller.connect();
     await controller.checkOpenQsp();
+    expect(controller.openQspCheckState, OpenQspCheckState.waiting);
 
     service.bytes.add(response(source: 'OQSP', body: 'not Q1'));
     await Future<void>.delayed(Duration.zero);
+    expect(controller.openQspErrors, 1);
+    expect(controller.openQspCheckState, OpenQspCheckState.waiting);
     service.bytes.add(response(source: 'OQSP', body: 'Q1:bad'));
     await Future<void>.delayed(Duration.zero);
     expect(controller.openQspErrors, 2);
+    expect(controller.openQspCheckState, OpenQspCheckState.waiting);
 
     service.bytes.add(
       response(source: 'OQSP', body: 'Q1:NEW:00/01:AUYABQEAAAAP'),
@@ -409,6 +413,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(controller.lastOpenQspObject, isA<OpenQspCapabilities>());
     expect(controller.openQspFramesRx, 1);
+    expect(controller.openQspCheckState, OpenQspCheckState.available);
   });
 
   test('valid Q1 from another station cannot satisfy the capability check',

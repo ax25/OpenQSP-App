@@ -228,9 +228,6 @@ class TncSettingsController extends ChangeNotifier {
       }
     } on Object catch (error) {
       openQspErrors++;
-      if (openQspCheckState == OpenQspCheckState.waiting) {
-        openQspCheckState = OpenQspCheckState.error;
-      }
       if (kDebugMode) debugPrint('OpenQSP APRS RX error: $error');
     }
   }
