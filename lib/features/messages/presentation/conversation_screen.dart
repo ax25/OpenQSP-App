@@ -20,9 +20,12 @@ class ConversationScreen extends StatefulWidget {
 
 class _ConversationScreenState extends State<ConversationScreen> {
   final _composer = TextEditingController();
+  final _composerFocus = FocusNode();
+  final _scrollController = ScrollController();
   bool _loading = true;
   bool _sending = false;
   String? _error;
+  int _messageCount = 0;
 
   @override
   void initState() {
@@ -37,11 +40,30 @@ class _ConversationScreenState extends State<ConversationScreen> {
     } on Object catch (error) {
       _error = error.toString();
     }
-    if (mounted) setState(() => _loading = false);
+    if (!mounted) return;
+    _messageCount = widget.controller.historyFor(widget.remoteCallsign).length;
+    setState(() => _loading = false);
+    _scrollToLatest();
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    final nextCount = widget.controller.historyFor(widget.remoteCallsign).length;
+    final hasNewMessage = nextCount > _messageCount;
+    _messageCount = nextCount;
+    setState(() {});
+    if (hasNewMessage) _scrollToLatest();
+  }
+
+  void _scrollToLatest() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+      );
+    });
   }
 
   Future<void> _send() async {
@@ -54,8 +76,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
     try {
       await widget.controller.send(widget.remoteCallsign, text);
       _composer.clear();
+      _composerFocus.requestFocus();
+      _scrollToLatest();
     } on Object catch (error) {
       _error = 'Message could not be sent: $error';
+      _composerFocus.requestFocus();
     } finally {
       if (mounted) setState(() => _sending = false);
     }
@@ -65,6 +90,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
   void dispose() {
     widget.controller.removeListener(_changed);
     _composer.dispose();
+    _composerFocus.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -87,6 +114,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
               : messages.isEmpty
               ? const Center(child: Text('No messages yet'))
               : ListView.builder(
+            key: const Key('messageList'),
+            controller: _scrollController,
             padding: const EdgeInsets.all(12),
             itemCount: messages.length,
             itemBuilder: (_, index) {
@@ -178,6 +207,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 child: TextField(
                   key: const Key('messageComposer'),
                   controller: _composer,
+                  focusNode: _composerFocus,
                   maxLength: maximumMessageLength,
                   inputFormatters: [
                     LengthLimitingTextInputFormatter(maximumMessageLength),
