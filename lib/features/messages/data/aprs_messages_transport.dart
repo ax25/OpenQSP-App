@@ -48,6 +48,7 @@ final class AprsMessagesTransport
   Future<SyncBatch>? _syncInFlight;
   OpenQspFrameObject? _lastObservedObject;
   int _lastObservedOpenQspFragments = 0;
+  RealtimeConnectionState? _lastEmittedConnectionState;
   Completer<void>? _storedResponse;
   _PendingSync? _pendingSync;
   int _localSequence = 0;
@@ -94,6 +95,8 @@ final class AprsMessagesTransport
       AprsSessionState.inactive || AprsSessionState.unavailable =>
         RealtimeConnectionState.disconnected,
     };
+    if (_lastEmittedConnectionState == state) return;
+    _lastEmittedConnectionState = state;
     _connections.add(state);
   }
 
