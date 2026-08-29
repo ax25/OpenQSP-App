@@ -155,14 +155,16 @@ class MainActivity : FlutterActivity() {
             } catch (_: IOException) {
                 // Closing the socket is the normal way to stop a blocking read.
             } finally {
-                handleReaderEnded(generation, activeSocket)
+                handleUnexpectedDisconnect(generation, activeSocket)
             }
         }
     }
 
     @Synchronized
-    private fun handleReaderEnded(generation: Int, activeSocket: BluetoothSocket) {
-        // Intentional disconnects and old readers have already changed generation.
+    private fun handleUnexpectedDisconnect(generation: Int, activeSocket: BluetoothSocket) {
+        // Whichever RX/TX path detects the loss first closes and advances the
+        // generation. Other paths, intentional disconnects, and old work then
+        // fail this guard and cannot emit a duplicate or stale event.
         if (generation != connectionGeneration || socket !== activeSocket) return
         closeSocket()
         mainHandler.post {
@@ -175,7 +177,11 @@ class MainActivity : FlutterActivity() {
     private fun write(bytes: ByteArray?, result: MethodChannel.Result) {
         if (bytes == null) { result.error("write_failed", "Missing bytes", null); return }
         val activeOutput = output
-        if (activeOutput == null) { result.error("connection_failed", "TNC is not connected", null); return }
+        val activeSocket = socket
+        if (activeOutput == null || activeSocket == null) {
+            result.error("connection_failed", "TNC is not connected", null)
+            return
+        }
         val generation = connectionGeneration
         executor.execute {
             try {
@@ -183,7 +189,7 @@ class MainActivity : FlutterActivity() {
                 activeOutput.flush()
                 mainHandler.post { result.success(null) }
             } catch (error: IOException) {
-                if (generation == connectionGeneration) closeSocket()
+                handleUnexpectedDisconnect(generation, activeSocket)
                 mainHandler.post { result.error("connection_failed", error.message, null) }
             }
         }
