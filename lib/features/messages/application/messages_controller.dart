@@ -103,6 +103,9 @@ class MessagesController extends ChangeNotifier {
   }
 
   void _connectionChanged(RealtimeConnectionState state) {
+    final previous = connectionState;
+    if (previous == state) return;
+
     connectionState = state;
     notifyListeners();
     if (state == RealtimeConnectionState.authenticationRequired) {
