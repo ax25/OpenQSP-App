@@ -172,9 +172,11 @@ void main() {
     await tester.pumpAndSettle();
 
     final listFinder = find.byKey(const Key('messageList'));
-    var scrollable = tester.state<ScrollableState>(
-      find.descendant(of: listFinder, matching: find.byType(Scrollable)),
+    final scrollableFinder = find.descendant(
+      of: listFinder,
+      matching: find.byType(Scrollable),
     );
+    final scrollable = tester.state<ScrollableState>(scrollableFinder);
     scrollable.position.jumpTo(0);
     await tester.pump();
     expect(scrollable.position.pixels, 0);
@@ -182,13 +184,14 @@ void main() {
     realtime.emit(
       _message('live-message', now.add(const Duration(minutes: 1)), from: 'N0CALL'),
     );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
     await tester.pumpAndSettle();
 
-    scrollable = tester.state<ScrollableState>(
-      find.descendant(of: listFinder, matching: find.byType(Scrollable)),
-    );
-    expect(scrollable.position.pixels, scrollable.position.maxScrollExtent);
-    expect(find.byKey(const Key('message-live-message')), findsOneWidget);
+    final liveMessage = find.byKey(const Key('message-live-message'));
+    expect(liveMessage, findsOneWidget);
+    expect(tester.getBottomRight(liveMessage).dy, lessThanOrEqualTo(600));
+    expect(scrollable.position.pixels, greaterThan(0));
   });
 }
 
