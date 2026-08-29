@@ -34,6 +34,8 @@ class MessagesController extends ChangeNotifier {
   String? openRemoteCallsign;
   RealtimeConnectionState connectionState = RealtimeConnectionState.connecting;
 
+  String get _syncCursorKey => messagesSyncCursorKey(repository);
+
   List<InternetMessage> historyFor(String remote) {
     final peer = _key(remote);
     final result = _messagesById.values
@@ -81,7 +83,7 @@ class MessagesController extends ChangeNotifier {
 
   Future<void> _bootstrapLocalHistoryIfNeeded() async {
     if (_messagesById.isNotEmpty ||
-        await localStore.cursor(callsign, repository.syncCursorKey) != null) {
+        await localStore.cursor(callsign, _syncCursorKey) != null) {
       return;
     }
     try {
@@ -133,7 +135,7 @@ class MessagesController extends ChangeNotifier {
 
   Future<void> _reconcile() async {
     try {
-      var cursor = await localStore.cursor(callsign, repository.syncCursorKey);
+      var cursor = await localStore.cursor(callsign, _syncCursorKey);
       var pages = 0;
       bool hasMore;
       do {
@@ -141,11 +143,7 @@ class MessagesController extends ChangeNotifier {
         await localStore.upsertAll(callsign, batch.messages);
         _mergeAll(batch.messages);
         cursor = batch.cursor;
-        await localStore.setCursor(
-          callsign,
-          repository.syncCursorKey,
-          cursor,
-        );
+        await localStore.setCursor(callsign, _syncCursorKey, cursor);
         hasMore = batch.hasMore;
         pages++;
         if (pages > 10000) {
