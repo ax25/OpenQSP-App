@@ -6,9 +6,24 @@ import '../data/bluetooth_tnc_service.dart';
 import '../data/bluetooth_tnc_storage.dart';
 import '../domain/tnc_connection_state.dart';
 import '../domain/tnc_device.dart';
+import '../kiss/kiss_encoder.dart';
+import '../kiss/kiss_frame.dart';
+import '../kiss/kiss_transport.dart';
 
 class TncSettingsController extends ChangeNotifier {
-  TncSettingsController({required this.storage, required this.service});
+  TncSettingsController({required this.storage, required this.service}) {
+    _kissTransport = KissTransport(service);
+    _byteSubscription = service.incomingBytes.listen((bytes) {
+      rxBytes += bytes.length;
+      _notify();
+    });
+    _frameSubscription = _kissTransport.frames.listen((frame) {
+      rxKissFrames++;
+      _activity.insert(0, 'RX  ${_hex(const KissEncoder().encode(frame))}');
+      if (_activity.length > 10) _activity.removeLast();
+      _notify();
+    });
+  }
 
   final BluetoothTncStorage storage;
   final BluetoothTncService service;
@@ -16,6 +31,28 @@ class TncSettingsController extends ChangeNotifier {
   TncDevice? device;
   TncFailure? failure;
   bool _disposed = false;
+  late final KissTransport _kissTransport;
+  late final StreamSubscription<List<int>> _byteSubscription;
+  late final StreamSubscription<KissFrame> _frameSubscription;
+  int rxBytes = 0;
+  int rxKissFrames = 0;
+  int txKissFrames = 0;
+  final List<String> _activity = [];
+
+  List<String> get kissActivity => List.unmodifiable(_activity);
+  bool get kissReady => state == TncConnectionState.connected;
+
+  static String _hex(Iterable<int> bytes) => bytes
+      .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
+      .join(' ');
+
+  Future<void> sendKiss(KissFrame frame) async {
+    await _kissTransport.send(frame);
+    txKissFrames++;
+    _activity.insert(0, 'TX  ${_hex(const KissEncoder().encode(frame))}');
+    if (_activity.length > 10) _activity.removeLast();
+    _notify();
+  }
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -107,6 +144,9 @@ class TncSettingsController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    unawaited(_byteSubscription.cancel());
+    unawaited(_frameSubscription.cancel());
+    unawaited(_kissTransport.close());
     unawaited(service.disconnect());
     super.dispose();
   }

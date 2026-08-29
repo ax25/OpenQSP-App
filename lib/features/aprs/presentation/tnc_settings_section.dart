@@ -85,7 +85,12 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 18),
-            _ValueRow(label: 'Estado', value: state.label),
+            _ValueRow(label: 'Estado Bluetooth', value: state.label),
+            const SizedBox(height: 10),
+            _ValueRow(
+              label: 'Estado KISS',
+              value: controller.kissReady ? 'Preparado' : 'Inactivo',
+            ),
             const SizedBox(height: 10),
             _ValueRow(
               label: 'Dispositivo',
@@ -98,6 +103,31 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                 controller.failure!.message,
                 key: const Key('tncError'),
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            const SizedBox(height: 18),
+            const Divider(),
+            const SizedBox(height: 10),
+            Text('Diagnóstico KISS', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 10),
+            _ValueRow(label: 'RX bytes', value: '${controller.rxBytes}'),
+            const SizedBox(height: 6),
+            _ValueRow(label: 'RX frames', value: '${controller.rxKissFrames}'),
+            const SizedBox(height: 6),
+            _ValueRow(label: 'TX frames', value: '${controller.txKissFrames}'),
+            if (controller.kissActivity.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ...controller.kissActivity.map(
+                (line) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: SelectableText(
+                    line,
+                    maxLines: 1,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
               ),
             ],
             const SizedBox(height: 18),

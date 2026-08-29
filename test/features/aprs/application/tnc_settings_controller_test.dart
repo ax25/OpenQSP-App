@@ -18,11 +18,15 @@ class MemoryTncStorage implements BluetoothTncStorage {
 }
 
 class FakeTncService implements BluetoothTncService {
+  final bytes = StreamController<List<int>>.broadcast();
   Object? error;
   bool connected = false;
   List<TncDevice> devices = const [];
   Future<void>? disconnectPending;
   int disconnectCalls = 0;
+
+  @override
+  Stream<List<int>> get incomingBytes => bytes.stream;
 
   @override
   Future<List<TncDevice>> bondedDevices() async {
@@ -43,6 +47,9 @@ class FakeTncService implements BluetoothTncService {
     final pending = disconnectPending;
     if (pending != null) await pending;
   }
+
+  @override
+  Future<void> sendBytes(List<int> data) async {}
 }
 
 void main() {
