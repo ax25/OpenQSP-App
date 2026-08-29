@@ -60,6 +60,7 @@ class MessagesController extends ChangeNotifier {
       notifyListeners();
       return;
     }
+    await _bootstrapLocalHistoryIfNeeded();
     await reconcile();
   }
 
@@ -75,6 +76,26 @@ class MessagesController extends ChangeNotifier {
     } finally {
       loading = false;
       notifyListeners();
+    }
+  }
+
+  Future<void> _bootstrapLocalHistoryIfNeeded() async {
+    if (_messagesById.isNotEmpty ||
+        await localStore.cursor(callsign, repository.syncCursorKey) != null) {
+      return;
+    }
+    try {
+      final historical = await repository.messages(
+        callsign: callsign,
+        token: token,
+      );
+      if (historical.isEmpty) return;
+      await localStore.upsertAll(callsign, historical);
+      _mergeAll(historical);
+      notifyListeners();
+    } on Object {
+      // Incremental sync below is authoritative. APRS deliberately has no
+      // complete sent-history operation, and offline local history remains usable.
     }
   }
 
@@ -96,6 +117,7 @@ class MessagesController extends ChangeNotifier {
 
   Future<void> loadConversations() async {
     await _loadLocal();
+    await _bootstrapLocalHistoryIfNeeded();
     await reconcile();
   }
 
