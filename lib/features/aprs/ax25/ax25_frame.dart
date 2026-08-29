@@ -2,8 +2,8 @@ import 'dart:typed_data';
 
 import 'ax25_address.dart';
 
-/// A received AX.25 frame. The information bytes are deliberately not parsed
-/// as APRS and remain available byte-for-byte.
+/// A received AX.25 frame whose information remains available byte-for-byte,
+/// including when a higher layer interprets it as APRS.
 final class Ax25Frame {
   Ax25Frame({
     required this.destination,

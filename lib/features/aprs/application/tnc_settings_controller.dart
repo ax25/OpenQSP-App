@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import '../ax25/ax25_decoder.dart';
 import '../ax25/ax25_frame.dart';
+import '../aprs/aprs_packet.dart';
+import '../aprs/aprs_parser.dart';
 import '../data/bluetooth_tnc_service.dart';
 import '../data/bluetooth_tnc_storage.dart';
 import '../domain/tnc_connection_state.dart';
@@ -50,12 +52,21 @@ class TncSettingsController extends ChangeNotifier {
   int txKissFrames = 0;
   final List<String> _activity = [];
   final List<String> _ax25Activity = [];
+  final List<String> _aprsActivity = [];
   static const Ax25Decoder _ax25Decoder = Ax25Decoder();
+  static const AprsParser _aprsParser = AprsParser();
   int rxAx25Frames = 0;
   int ax25DecodeErrors = 0;
+  int rxAprsPackets = 0;
+  int aprsParseErrors = 0;
+  int aprsMessages = 0;
+  int aprsAcks = 0;
+  int aprsRejects = 0;
+  int openQspRxPackets = 0;
 
   List<String> get kissActivity => List.unmodifiable(_activity);
   List<String> get ax25Activity => List.unmodifiable(_ax25Activity);
+  List<String> get aprsActivity => List.unmodifiable(_aprsActivity);
   bool get kissReady => state == TncConnectionState.connected;
 
   static String _hex(Iterable<int> bytes) => bytes
@@ -68,6 +79,7 @@ class TncSettingsController extends ChangeNotifier {
       rxAx25Frames++;
       _ax25Activity.insert(0, _describeAx25(frame));
       if (_ax25Activity.length > 10) _ax25Activity.removeLast();
+      _decodeAprs(frame);
       if (kDebugMode) {
         debugPrint(
           'AX.25 frame decoded: ${frame.source} > ${frame.destination}',
@@ -78,6 +90,66 @@ class TncSettingsController extends ChangeNotifier {
       if (kDebugMode) debugPrint('AX.25 decode error: ${error.message}');
     }
   }
+
+  void _decodeAprs(Ax25Frame frame) {
+    final packet = _aprsParser.parse(frame);
+    if (packet == null) return;
+    rxAprsPackets++;
+    if (packet is AprsInvalid) {
+      aprsParseErrors++;
+      if (kDebugMode) debugPrint('APRS parse error: ${packet.reason}');
+      return;
+    }
+    if (packet.isForOpenQsp) openQspRxPackets++;
+    switch (packet) {
+      case AprsTextMessage():
+        aprsMessages++;
+        break;
+      case AprsAck():
+        aprsAcks++;
+        break;
+      case AprsReject():
+        aprsRejects++;
+        break;
+      case AprsUnknown():
+        break;
+      case AprsInvalid():
+        break;
+    }
+    _aprsActivity.insert(0, _describeAprs(packet));
+    if (_aprsActivity.length > 10) _aprsActivity.removeLast();
+    if (kDebugMode) debugPrint(_aprsLog(packet));
+  }
+
+  static String _describeAprs(AprsPacket packet) {
+    final source = packet.frame.source;
+    final oqsp = packet.isForOpenQsp ? '[OQSP] ' : '';
+    return switch (packet) {
+      AprsTextMessage(:final addressee, :final text, :final messageId) =>
+        '${oqsp}MSG  $source → $addressee\n'
+            'ID: ${messageId ?? '-'}\nTEXT: $text',
+      AprsAck(:final addressee, :final messageId) =>
+        '${oqsp}ACK  $source → $addressee\nID: $messageId',
+      AprsReject(:final addressee, :final messageId) =>
+        '${oqsp}REJ  $source → $addressee\nID: $messageId',
+      AprsUnknown(:final typeIdentifier) =>
+        'APRS  $source\nTYPE: $typeIdentifier\nINFO: ${packet.frame.informationText}',
+      AprsInvalid() => '',
+    };
+  }
+
+  static String _aprsLog(AprsPacket packet) => switch (packet) {
+    AprsTextMessage(:final addressee, :final messageId) =>
+      'APRS message decoded: ${packet.frame.source} -> $addressee '
+          'id=${messageId ?? '-'}',
+    AprsAck(:final addressee, :final messageId) =>
+      'APRS ACK decoded: ${packet.frame.source} -> $addressee id=$messageId',
+    AprsReject(:final addressee, :final messageId) =>
+      'APRS REJ decoded: ${packet.frame.source} -> $addressee id=$messageId',
+    AprsUnknown(:final typeIdentifier) =>
+      'APRS packet decoded: ${packet.frame.source} type=$typeIdentifier',
+    AprsInvalid(:final reason) => 'APRS parse error: $reason',
+  };
 
   static String _describeAx25(Ax25Frame frame) {
     final via = frame.digipeaters.isEmpty

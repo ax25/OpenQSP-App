@@ -243,6 +243,35 @@ void main() {
     expect(controller.state, isNot(TncConnectionState.error));
   });
 
+  test('malformed APRS is isolated and a following message is decoded', () async {
+    List<int> kissData(String information) {
+      final ax25 = [
+        ...'APN382'.codeUnits.map((value) => value << 1),
+        0x60,
+        ...'EA3GNU'.codeUnits.map((value) => value << 1),
+        0x61,
+        0x03,
+        0xf0,
+        ...information.codeUnits,
+      ];
+      return [0xc0, 0x00, ...ax25, 0xc0];
+    }
+
+    service.bytes.add(kissData(':OQSP     :ack'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.rxAx25Frames, 1);
+    expect(controller.ax25DecodeErrors, 0);
+    expect(controller.rxAprsPackets, 1);
+    expect(controller.aprsParseErrors, 1);
+
+    service.bytes.add(kissData(':OQSP     :HELLO{12'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.rxAx25Frames, 2);
+    expect(controller.aprsMessages, 1);
+    expect(controller.openQspRxPackets, 1);
+    expect(controller.aprsActivity.single, contains('TEXT: HELLO'));
+  });
+
   test('dispose closes an active connection without later notifications', () async {
     storage.value = device;
     await controller.initialize();
