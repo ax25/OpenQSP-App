@@ -29,8 +29,6 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
   @override
   void dispose() {
     controller.removeListener(_refresh);
-    controller.disconnect();
-    controller.dispose();
     super.dispose();
   }
 

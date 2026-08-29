@@ -27,7 +27,7 @@ class HomeScreen extends StatefulWidget {
     required this.authSession,
     required this.messagesRepository,
     required this.messagesRealtimeFactory,
-    required this.onOpenSettings,
+    this.onOpenSettings,
   });
 
   final String callsign;
@@ -36,7 +36,7 @@ class HomeScreen extends StatefulWidget {
   final AuthSession authSession;
   final MessagesRepository messagesRepository;
   final MessagesRealtimeClient Function() messagesRealtimeFactory;
-  final VoidCallback onOpenSettings;
+  final VoidCallback? onOpenSettings;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -283,7 +283,7 @@ class _HomeHeader extends StatelessWidget {
 
   final String callsign;
   final VoidCallback onEditCallsign;
-  final VoidCallback onOpenSettings;
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -329,7 +329,7 @@ class _HeaderActions extends StatelessWidget {
 
   final String callsign;
   final VoidCallback onEdit;
-  final VoidCallback onOpenSettings;
+  final VoidCallback? onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -341,13 +341,15 @@ class _HeaderActions extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         const _TransportSelector(),
-        const SizedBox(width: 4),
-        IconButton(
-          key: const Key('settingsButton'),
-          tooltip: 'Configuración',
-          onPressed: onOpenSettings,
-          icon: const Icon(Icons.settings_outlined),
-        ),
+        if (onOpenSettings != null) ...[
+          const SizedBox(width: 4),
+          IconButton(
+            key: const Key('settingsButton'),
+            tooltip: 'Configuración',
+            onPressed: onOpenSettings,
+            icon: const Icon(Icons.settings_outlined),
+          ),
+        ],
       ],
     );
   }

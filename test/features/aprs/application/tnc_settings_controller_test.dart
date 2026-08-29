@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_service.dart';
@@ -19,6 +21,8 @@ class FakeTncService implements BluetoothTncService {
   Object? error;
   bool connected = false;
   List<TncDevice> devices = const [];
+  Future<void>? disconnectPending;
+  int disconnectCalls = 0;
 
   @override
   Future<List<TncDevice>> bondedDevices() async {
@@ -33,7 +37,12 @@ class FakeTncService implements BluetoothTncService {
   }
 
   @override
-  Future<void> disconnect() async => connected = false;
+  Future<void> disconnect() async {
+    disconnectCalls++;
+    connected = false;
+    final pending = disconnectPending;
+    if (pending != null) await pending;
+  }
 }
 
 void main() {
@@ -103,5 +112,24 @@ void main() {
     expect(await controller.loadDevices(), isNull);
     expect(controller.state, TncConnectionState.error);
     expect(controller.failure, TncFailure.permissionDenied);
+  });
+
+  test('dispose closes an active connection without later notifications', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.connect();
+    var notifications = 0;
+    controller.addListener(() => notifications++);
+    final pendingDisconnect = Completer<void>();
+    service.disconnectPending = pendingDisconnect.future;
+
+    controller.dispose();
+
+    expect(service.disconnectCalls, 1);
+    expect(service.connected, isFalse);
+    pendingDisconnect.complete();
+    await pendingDisconnect.future;
+    await Future<void>.delayed(Duration.zero);
+    expect(notifications, 0);
   });
 }

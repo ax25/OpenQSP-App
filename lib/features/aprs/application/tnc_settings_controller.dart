@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 import '../data/bluetooth_tnc_service.dart';
@@ -13,13 +15,18 @@ class TncSettingsController extends ChangeNotifier {
   TncConnectionState state = TncConnectionState.loading;
   TncDevice? device;
   TncFailure? failure;
+  bool _disposed = false;
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
 
   Future<void> initialize() async {
     device = await storage.read();
     state = device == null
         ? TncConnectionState.notConfigured
         : TncConnectionState.configured;
-    notifyListeners();
+    _notify();
   }
 
   Future<List<TncDevice>?> loadDevices() async {
@@ -40,7 +47,7 @@ class TncSettingsController extends ChangeNotifier {
     device = selected;
     failure = null;
     state = TncConnectionState.configured;
-    notifyListeners();
+    _notify();
   }
 
   Future<void> connect() async {
@@ -48,27 +55,31 @@ class TncSettingsController extends ChangeNotifier {
     if (selected == null) return;
     failure = null;
     state = TncConnectionState.connecting;
-    notifyListeners();
+    _notify();
     try {
       await service.connect(selected);
+      if (_disposed) return;
       state = TncConnectionState.connected;
-      notifyListeners();
+      _notify();
     } on TncServiceException catch (error) {
+      if (_disposed) return;
       _setError(error.failure);
     } catch (_) {
+      if (_disposed) return;
       _setError(TncFailure.unknown);
     }
   }
 
   Future<void> disconnect() async {
     await service.disconnect();
+    if (_disposed) return;
     if (state == TncConnectionState.connected ||
         state == TncConnectionState.connecting) {
       state = device == null
           ? TncConnectionState.notConfigured
           : TncConnectionState.configured;
       failure = null;
-      notifyListeners();
+      _notify();
     }
   }
 
@@ -78,12 +89,25 @@ class TncSettingsController extends ChangeNotifier {
     device = null;
     failure = null;
     state = TncConnectionState.notConfigured;
-    notifyListeners();
+    _notify();
   }
 
   void _setError(TncFailure value) {
     failure = value;
     state = TncConnectionState.error;
-    notifyListeners();
+    _notify();
+  }
+
+  /// Ends this controller's ownership of the test connection.
+  ///
+  /// Transport shutdown is deliberately separate from [disconnect]'s UI state
+  /// transition: Flutter disposal cannot await, and no asynchronous completion
+  /// is allowed to notify a disposed [ChangeNotifier].
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    unawaited(service.disconnect());
+    super.dispose();
   }
 }
