@@ -205,7 +205,8 @@ class MemoryLocalStore implements LocalMessagesStore {
   ) async => cursors[transport] = value;
 }
 
-class FakeRepository implements MessagesRepository {
+class FakeRepository
+    implements MessagesRepository, MessagesSyncCursorNamespace {
   final syncItems = <InternetMessage>[];
   final markedReadPeers = <String>[];
   String? lastSentText;
