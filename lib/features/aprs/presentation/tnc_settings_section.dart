@@ -63,6 +63,11 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
     if (selected != null) await controller.select(selected);
   }
 
+  Future<void> _showDiagnostics() => showDialog<void>(
+    context: context,
+    builder: (_) => _TncDiagnosticsDialog(controller: controller),
+  );
+
   void _message(String value) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -184,47 +189,103 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
               ),
             ],
             const SizedBox(height: 14),
-            FilledButton.icon(
-              key: const Key('checkOpenQspButton'),
-              onPressed:
-                  controller.kissReady &&
-                      controller.openQspCheckState != OpenQspCheckState.waiting
-                  ? controller.checkOpenQsp
-                  : null,
-              icon: const Icon(Icons.cell_tower),
-              label: const Text('Comprobar OpenQSP'),
-            ),
-            const SizedBox(height: 16),
-            const Divider(),
-            ExpansionTile(
-              key: const Key('tncDiagnostics'),
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: EdgeInsets.zero,
-              title: const Text('Diagnóstico TNC/APRS'),
-              subtitle: const Text('Contadores y últimas tramas recibidas'),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
               children: [
-                _DiagnosticsCounters(controller: controller),
-                const SizedBox(height: 16),
-                _ActivityLog(
-                  title: 'Últimos KISS RX/TX',
-                  entries: controller.kissActivity,
+                FilledButton.icon(
+                  key: const Key('checkOpenQspButton'),
+                  onPressed:
+                      controller.kissReady &&
+                          controller.openQspCheckState !=
+                              OpenQspCheckState.waiting
+                      ? controller.checkOpenQsp
+                      : null,
+                  icon: const Icon(Icons.cell_tower),
+                  label: const Text('Comprobar OpenQSP'),
                 ),
-                const SizedBox(height: 12),
-                _ActivityLog(
-                  title: 'Últimos AX.25 RX',
-                  entries: controller.ax25Activity,
+                OutlinedButton.icon(
+                  key: const Key('tncDiagnosticsButton'),
+                  onPressed: _showDiagnostics,
+                  icon: const Icon(Icons.monitor_heart_outlined),
+                  label: const Text('Diagnóstico'),
                 ),
-                const SizedBox(height: 12),
-                _ActivityLog(
-                  title: 'Últimos APRS RX',
-                  entries: controller.aprsActivity,
-                ),
-                const SizedBox(height: 8),
               ],
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _TncDiagnosticsDialog extends StatefulWidget {
+  const _TncDiagnosticsDialog({required this.controller});
+
+  final TncSettingsController controller;
+
+  @override
+  State<_TncDiagnosticsDialog> createState() => _TncDiagnosticsDialogState();
+}
+
+class _TncDiagnosticsDialogState extends State<_TncDiagnosticsDialog> {
+  TncSettingsController get controller => widget.controller;
+
+  @override
+  void initState() {
+    super.initState();
+    controller.addListener(_refresh);
+  }
+
+  void _refresh() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    controller.removeListener(_refresh);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.sizeOf(context);
+    return AlertDialog(
+      key: const Key('tncDiagnostics'),
+      title: const Text('Diagnóstico TNC/APRS'),
+      content: SizedBox(
+        width: media.width.clamp(280.0, 720.0),
+        height: media.height * 0.72,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _DiagnosticsCounters(controller: controller),
+              const SizedBox(height: 20),
+              _ActivityLog(
+                title: 'Últimos KISS RX/TX',
+                entries: controller.kissActivity,
+              ),
+              const SizedBox(height: 16),
+              _ActivityLog(
+                title: 'Últimos AX.25 RX',
+                entries: controller.ax25Activity,
+              ),
+              const SizedBox(height: 16),
+              _ActivityLog(
+                title: 'Últimos APRS RX',
+                entries: controller.aprsActivity,
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cerrar'),
+        ),
+      ],
     );
   }
 }
