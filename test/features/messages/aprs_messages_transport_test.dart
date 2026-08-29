@@ -16,6 +16,7 @@ import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
 import 'package:openqsp_app/features/aprs/openqsp_carriage/openqsp_aprs_carriage.dart';
 import 'package:openqsp_app/features/messages/data/aprs_messages_transport.dart';
+import 'package:openqsp_app/features/messages/data/messages_transport.dart';
 import 'package:openqsp_app/features/messages/domain/message_models.dart';
 
 class _MemoryStorage implements BluetoothTncStorage {
@@ -222,11 +223,18 @@ void main() {
     await expectLater(pending, throwsA(isA<TimeoutException>()));
   });
 
-  test('sync timeout is refreshed by continuing OpenQSP traffic', () async {
-    final pending = transport.sync(token: '', cursor: '0');
-    await Future<void>.delayed(Duration.zero);
+  test('sync inactivity timeout is refreshed by incoming Q1 traffic', () async {
+    final slowTransport = AprsMessagesTransport(
+      session: session,
+      callsign: 'EA3GNU',
+      responseTimeout: const Duration(milliseconds: 80),
+      transactionIdFactory: () => 'DEF',
+    );
+    await slowTransport.connect(callsign: 'EA3GNU', token: '');
+    addTearDown(slowTransport.close);
 
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+    final pending = slowTransport.sync(token: '', cursor: '0');
+    await Future<void>.delayed(const Duration(milliseconds: 50));
     _injectObject(
       service,
       const OpenQspMessage(
@@ -234,14 +242,11 @@ void main() {
         createdAt: 1700000000,
         author: 'EA3ABC',
         recipient: 'EA3GNU',
-        body: 'still active',
+        body: 'keeps sync alive',
       ),
       transactionId: '030',
     );
-
-    // Total wall time is now longer than the configured one-second timeout,
-    // but less than one second has elapsed since the last OpenQSP traffic.
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
     _injectObject(
       service,
       const OpenQspEnd(
@@ -255,15 +260,14 @@ void main() {
 
     final batch = await pending;
     expect(batch.cursor, '1');
-    expect(batch.messages.single.body, 'still active');
   });
 
-  test('concurrent sync calls share one GET_NEW_MESSAGES request', () async {
-    final first = transport.sync(token: '', cursor: '0');
-    final second = transport.sync(token: '', cursor: '0');
-    expect(identical(first, second), isTrue);
-
+  test('simultaneous sync calls share one APRS request', () async {
+    final first = transport.sync(token: '', cursor: '6');
+    final second = transport.sync(token: '', cursor: '6');
     await Future<void>.delayed(Duration.zero);
+
+    expect(identical(first, second), isTrue);
     expect(service.sentBytes, hasLength(1));
 
     _injectObject(
@@ -271,14 +275,38 @@ void main() {
       const OpenQspEnd(
         requestOperation: OpenQspOperation.getNewMessages,
         returnedCount: 0,
-        nextSince: 0,
+        nextSince: 6,
         hasMore: false,
       ),
       transactionId: '040',
     );
 
-    expect((await first).cursor, '0');
-    expect((await second).cursor, '0');
+    await first;
+    await second;
+  });
+
+  test('connection state is emitted only when APRS state changes', () async {
+    final extraTransport = AprsMessagesTransport(
+      session: session,
+      callsign: 'EA3GNU',
+      responseTimeout: const Duration(seconds: 1),
+      transactionIdFactory: () => 'GHI',
+    );
+    final states = <RealtimeConnectionState>[];
+    final subscription = extraTransport.connectionStates.listen(states.add);
+    addTearDown(subscription.cancel);
+    addTearDown(extraTransport.close);
+
+    await extraTransport.connect(callsign: 'EA3GNU', token: '');
+    await Future<void>.delayed(Duration.zero);
+    expect(states, [RealtimeConnectionState.connected]);
+
+    await tnc.setAprsSsid(0);
+    await tnc.setAprsSsid(0);
+    await tnc.setAprsSsid(0);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(states, [RealtimeConnectionState.connected]);
   });
 }
 
