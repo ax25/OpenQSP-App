@@ -29,12 +29,12 @@ void main() {
   test('bridges incoming chunks to frames and frames to outgoing bytes', () async {
     final bluetooth = FakeBluetooth();
     final transport = KissTransport(bluetooth);
-    final received = <KissFrame>[];
-    transport.frames.listen(received.add);
+    final receivedFrame = transport.frames.first;
 
     bluetooth.input.add([0xc0, 0, 1]);
     bluetooth.input.add([2, 0xc0]);
-    expect(received.single.payload, [1, 2]);
+    final frame = await receivedFrame;
+    expect(frame.payload, [1, 2]);
 
     await transport.send(KissFrame(port: 0, command: 0, payload: [0xc0]));
     expect(bluetooth.written, [0xc0, 0, 0xdb, 0xdc, 0xc0]);
