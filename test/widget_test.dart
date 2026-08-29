@@ -387,6 +387,12 @@ class FakeMessagesRepository implements MessagesRepository {
   }) async => [];
 
   @override
+  Future<void> markConversationRead({
+    required String remoteCallsign,
+    required String token,
+  }) async {}
+
+  @override
   Future<InternetMessage> send({
     required String callsign,
     required String remoteCallsign,
