@@ -18,7 +18,10 @@ import 'messages_transport.dart';
 
 /// Message transport backed by the already-active APRS/KISS session.
 final class AprsMessagesTransport
-    implements MessagesRepository, MessagesRealtimeClient {
+    implements
+        MessagesRepository,
+        MessagesRealtimeClient,
+        MessagesSyncCursorNamespace {
   AprsMessagesTransport({
     required this.session,
     required String callsign,
