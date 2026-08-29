@@ -10,7 +10,11 @@ final class FakeBluetooth implements BluetoothTncService {
   final input = StreamController<List<int>>.broadcast();
   List<int>? written;
   @override
+  int? get activeConnectionId => null;
+  @override
   Stream<List<int>> get incomingBytes => input.stream;
+  @override
+  Stream<int> get unexpectedDisconnections => const Stream.empty();
   @override
   Future<List<TncDevice>> bondedDevices() async => [];
   @override

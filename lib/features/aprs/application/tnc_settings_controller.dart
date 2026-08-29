@@ -23,6 +23,13 @@ class TncSettingsController extends ChangeNotifier {
       if (_activity.length > 10) _activity.removeLast();
       _notify();
     });
+    _connectionLossSubscription = service.unexpectedDisconnections.listen((id) {
+      if (id != service.activeConnectionId ||
+          state != TncConnectionState.connected) {
+        return;
+      }
+      _setError(TncFailure.connectionFailed);
+    });
   }
 
   final BluetoothTncStorage storage;
@@ -34,6 +41,7 @@ class TncSettingsController extends ChangeNotifier {
   late final KissTransport _kissTransport;
   late final StreamSubscription<List<int>> _byteSubscription;
   late final StreamSubscription<KissFrame> _frameSubscription;
+  late final StreamSubscription<int> _connectionLossSubscription;
   int rxBytes = 0;
   int rxKissFrames = 0;
   int txKissFrames = 0;
@@ -146,6 +154,7 @@ class TncSettingsController extends ChangeNotifier {
     _disposed = true;
     unawaited(_byteSubscription.cancel());
     unawaited(_frameSubscription.cancel());
+    unawaited(_connectionLossSubscription.cancel());
     unawaited(_kissTransport.close());
     unawaited(service.disconnect());
     super.dispose();

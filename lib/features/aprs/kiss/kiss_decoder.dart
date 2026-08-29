@@ -7,6 +7,12 @@ import 'kiss_frame.dart';
 
 /// Incrementally reconstructs KISS frames from arbitrary byte chunks.
 final class KissDecoder {
+  KissDecoder({this.maximumFrameLength = 65536})
+    : assert(maximumFrameLength > 0);
+
+  /// Maximum unescaped command-and-payload length retained without a FEND.
+  /// Corrupt oversized frames are discarded until a fresh delimiter arrives.
+  final int maximumFrameLength;
   final _frames = StreamController<KissFrame>.broadcast(sync: true);
   final List<int> _buffer = [];
   bool _insideFrame = false;
@@ -47,6 +53,11 @@ final class KissDecoder {
         _escaped = true;
       } else {
         _buffer.add(byte);
+      }
+      if (_buffer.length > maximumFrameLength) {
+        _buffer.clear();
+        _insideFrame = false;
+        _escaped = false;
       }
     }
   }

@@ -112,5 +112,17 @@ void main() {
       await done.future;
       expect(frames, isEmpty);
     });
+
+    test('discards an unterminated frame that exceeds the size limit', () async {
+      final limitedDecoder = KissDecoder(maximumFrameLength: 4);
+      final limitedFrames = <KissFrame>[];
+      limitedDecoder.frames.listen(limitedFrames.add);
+
+      limitedDecoder.add([0xc0, 0, 1, 2, 3, 4, 5, 0xc0]);
+      limitedDecoder.add([0, 9, 0xc0]);
+
+      expect(limitedFrames.single.payload, [9]);
+      await limitedDecoder.close();
+    });
   });
 }

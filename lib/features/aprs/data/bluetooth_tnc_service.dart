@@ -15,6 +15,8 @@ class TncServiceException implements Exception {
 
 abstract interface class BluetoothTncService {
   Stream<List<int>> get incomingBytes;
+  Stream<int> get unexpectedDisconnections;
+  int? get activeConnectionId;
   Future<List<TncDevice>> bondedDevices();
   Future<void> connect(TncDevice device);
   Future<void> disconnect();
@@ -22,13 +24,22 @@ abstract interface class BluetoothTncService {
 }
 
 class AndroidBluetoothTncService implements BluetoothTncService {
-  AndroidBluetoothTncService({MethodChannel? channel, EventChannel? events})
+  AndroidBluetoothTncService({
+    MethodChannel? channel,
+    EventChannel? events,
+    EventChannel? connectionEvents,
+  })
     : _channel = channel ?? const MethodChannel('app.openqsp/bluetooth_tnc'),
-      _events = events ?? const EventChannel('app.openqsp/bluetooth_tnc/bytes');
+      _events = events ?? const EventChannel('app.openqsp/bluetooth_tnc/bytes'),
+      _connectionEvents = connectionEvents ??
+          const EventChannel('app.openqsp/bluetooth_tnc/connection_events');
 
   final MethodChannel _channel;
   final EventChannel _events;
+  final EventChannel _connectionEvents;
   Stream<List<int>>? _incomingBytes;
+  Stream<int>? _unexpectedDisconnections;
+  int? _activeConnectionId;
   static const connectionTimeout = Duration(seconds: 12);
 
   @override
@@ -42,6 +53,19 @@ class AndroidBluetoothTncService implements BluetoothTncService {
         }());
         return bytes;
       });
+
+  @override
+  int? get activeConnectionId => _activeConnectionId;
+
+  @override
+  Stream<int> get unexpectedDisconnections =>
+      _unexpectedDisconnections ??= _connectionEvents
+          .receiveBroadcastStream()
+          .map(
+            (value) =>
+                Map<Object?, Object?>.from(value! as Map)['connectionId']! as int,
+          )
+          .where((connectionId) => connectionId == _activeConnectionId);
 
   Future<void> _ensureAndroid() async {
     if (!Platform.isAndroid) {
@@ -74,9 +98,10 @@ class AndroidBluetoothTncService implements BluetoothTncService {
   @override
   Future<void> connect(TncDevice device) async {
     await _ensureAndroid();
+    _activeConnectionId = null;
     try {
-      await _channel
-          .invokeMethod<void>('connect', {'address': device.id})
+      _activeConnectionId = await _channel
+          .invokeMethod<int>('connect', {'address': device.id})
           .timeout(connectionTimeout);
     } on TimeoutException {
       await disconnect();
@@ -89,6 +114,8 @@ class AndroidBluetoothTncService implements BluetoothTncService {
   @override
   Future<void> disconnect() async {
     if (!Platform.isAndroid) return;
+    // Clear first: closing the socket unblocks read(), but that is intentional.
+    _activeConnectionId = null;
     try {
       await _channel.invokeMethod<void>('disconnect');
     } on PlatformException {

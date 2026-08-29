@@ -23,6 +23,7 @@ class MainActivity : FlutterActivity() {
     private val permissionRequest = 4201
     private val sppUuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     private val eventChannelName = "app.openqsp/bluetooth_tnc/bytes"
+    private val connectionEventChannelName = "app.openqsp/bluetooth_tnc/connection_events"
     private val executor = Executors.newCachedThreadPool()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var pendingPermission: MethodChannel.Result? = null
@@ -30,6 +31,7 @@ class MainActivity : FlutterActivity() {
     @Volatile private var input: InputStream? = null
     @Volatile private var output: OutputStream? = null
     @Volatile private var eventSink: EventChannel.EventSink? = null
+    @Volatile private var connectionEventSink: EventChannel.EventSink? = null
     @Volatile private var connectionGeneration = 0
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -44,6 +46,16 @@ class MainActivity : FlutterActivity() {
 
                 override fun onCancel(arguments: Any?) {
                     eventSink = null
+                }
+            })
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, connectionEventChannelName)
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    connectionEventSink = events
+                }
+
+                override fun onCancel(arguments: Any?) {
+                    connectionEventSink = null
                 }
             })
     }
@@ -113,7 +125,7 @@ class MainActivity : FlutterActivity() {
                 output = candidate.outputStream
                 val generation = connectionGeneration
                 startReader(generation, candidate, input!!)
-                runOnUiThread { result.success(null) }
+                runOnUiThread { result.success(generation) }
             } catch (error: SecurityException) {
                 closeSocket()
                 runOnUiThread { result.error("permission_denied", error.message, null) }
@@ -143,8 +155,20 @@ class MainActivity : FlutterActivity() {
             } catch (_: IOException) {
                 // Closing the socket is the normal way to stop a blocking read.
             } finally {
-                if (generation == connectionGeneration && socket === activeSocket) closeSocket()
+                handleReaderEnded(generation, activeSocket)
             }
+        }
+    }
+
+    @Synchronized
+    private fun handleReaderEnded(generation: Int, activeSocket: BluetoothSocket) {
+        // Intentional disconnects and old readers have already changed generation.
+        if (generation != connectionGeneration || socket !== activeSocket) return
+        closeSocket()
+        mainHandler.post {
+            connectionEventSink?.success(
+                mapOf("type" to "unexpected_disconnect", "connectionId" to generation)
+            )
         }
     }
 
