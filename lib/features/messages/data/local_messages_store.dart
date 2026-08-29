@@ -53,15 +53,42 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
     if (additions.isEmpty) return _writeTail;
     return _enqueue(() async {
       final preferences = await _preferences;
-      final stored = _decodeMessages(preferences.getString(_messagesKey(callsign)));
+      final normalizedCallsign = _normalize(callsign);
+      final stored = _decodeMessages(
+        preferences.getString(_messagesKey(normalizedCallsign)),
+      );
       for (final message in additions) {
         _upsertOne(stored, message);
       }
       stored.sort((a, b) => a.createdAt.compareTo(b.createdAt));
       await preferences.setString(
-        _messagesKey(callsign),
+        _messagesKey(normalizedCallsign),
         jsonEncode(stored.map(_encodeMessage).toList()),
       );
+
+      // The APRS Core cursor is the recipient mailbox sequence and is encoded
+      // in the canonical message id. If an incoming message arrived first over
+      // Internet, advance the APRS cursor too so switching transports does not
+      // redownload that already-cached mailbox history.
+      var inferredAprs = 0;
+      for (final message in stored) {
+        if (_normalize(message.to) != normalizedCallsign) continue;
+        final sequence = _canonicalMailboxSequence(message.id, normalizedCallsign);
+        if (sequence != null && sequence > inferredAprs) inferredAprs = sequence;
+      }
+      if (inferredAprs > 0) {
+        final cursors = _decodeCursors(
+          preferences.getString(_cursorsKey(normalizedCallsign)),
+        );
+        final current = int.tryParse(cursors['aprs'] ?? '') ?? 0;
+        if (inferredAprs > current) {
+          cursors['aprs'] = '$inferredAprs';
+          await preferences.setString(
+            _cursorsKey(normalizedCallsign),
+            jsonEncode(cursors),
+          );
+        }
+      }
     });
   }
 
@@ -117,7 +144,10 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
       if (decoded is! List) return <InternetMessage>[];
       return decoded
           .whereType<Map>()
-          .map((value) => InternetMessage.fromJson(Map<String, dynamic>.from(value)))
+          .map(
+            (value) =>
+                InternetMessage.fromJson(Map<String, dynamic>.from(value)),
+          )
           .toList();
     } on Object {
       // A corrupt local cache must never prevent the user from synchronizing it
@@ -148,6 +178,23 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
     'delivery_status': message.deliveryStatus.name,
     'delivered_at': message.deliveredAt?.toUtc().toIso8601String(),
   };
+
+  static int? _canonicalMailboxSequence(String id, String recipient) {
+    if (id.startsWith('aprs-local-')) return null;
+    try {
+      final decoded = utf8.decode(
+        base64Url.decode(base64Url.normalize(id)),
+      );
+      final separator = decoded.lastIndexOf(':');
+      if (separator <= 0) return null;
+      if (_normalize(decoded.substring(0, separator)) != recipient) return null;
+      final sequence = int.tryParse(decoded.substring(separator + 1));
+      if (sequence == null || sequence <= 0 || sequence > 0xffffffff) return null;
+      return sequence;
+    } on Object {
+      return null;
+    }
+  }
 
   static void _upsertOne(
     List<InternetMessage> messages,
