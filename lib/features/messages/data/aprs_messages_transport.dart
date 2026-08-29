@@ -17,10 +17,6 @@ import '../domain/message_models.dart';
 import 'messages_transport.dart';
 
 /// Message transport backed by the already-active APRS/KISS session.
-///
-/// This first APRS messaging slice intentionally keeps only session-local
-/// history. Durable history/reconciliation and read receipts remain Internet
-/// features until their Core operations are wired over APRS.
 final class AprsMessagesTransport
     implements MessagesRepository, MessagesRealtimeClient {
   AprsMessagesTransport({
@@ -45,14 +41,18 @@ final class AprsMessagesTransport
   final StreamController<RealtimeConnectionState> _connections =
       StreamController<RealtimeConnectionState>.broadcast();
   final List<InternetMessage> _messages = [];
-  Future<void> _sendTail = Future<void>.value();
+  Future<void> _operationTail = Future<void>.value();
   OpenQspFrameObject? _lastObservedObject;
   Completer<void>? _storedResponse;
+  _PendingSync? _pendingSync;
   int _localSequence = 0;
   bool _connected = false;
   bool _closed = false;
 
   TncSettingsController get _tnc => session.tncController;
+
+  @override
+  String get syncCursorKey => 'aprs';
 
   @override
   Stream<MessagingEvent> get events => _events.stream;
@@ -102,24 +102,57 @@ final class AprsMessagesTransport
         final pending = _storedResponse;
         if (pending != null && !pending.isCompleted) pending.complete();
       case OpenQspError(:final requestOperation, :final detail):
+        final message = detail.isEmpty ? 'Server rejected APRS request' : detail;
         if (requestOperation == OpenQspOperation.sendMessage.code) {
           final pending = _storedResponse;
           if (pending != null && !pending.isCompleted) {
-            pending.completeError(
-              StateError(
-                detail.isEmpty ? 'Server rejected APRS message' : detail,
-              ),
-            );
+            pending.completeError(StateError(message));
+          }
+        } else if (requestOperation == OpenQspOperation.getNewMessages.code) {
+          final pending = _pendingSync;
+          if (pending != null && !pending.completer.isCompleted) {
+            pending.completer.completeError(StateError(message));
           }
         }
       case OpenQspMessage():
         final message = _fromOpenQspMessage(object);
-        if (_messages.every((existing) => existing.id != message.id)) {
+        final pending = _pendingSync;
+        if (pending != null) {
+          if (pending.messages.every((existing) => existing.id != message.id)) {
+            pending.messages.add(message);
+          }
+        } else if (_messages.every((existing) => existing.id != message.id)) {
           _messages.add(message);
           _events.add(MessageReceived(message));
         }
+      case OpenQspEnd(
+        :final requestOperation,
+        :final nextSince,
+        :final hasMore,
+      ):
+        if (requestOperation == OpenQspOperation.getNewMessages) {
+          final pending = _pendingSync;
+          if (pending != null && !pending.completer.isCompleted) {
+            _mergeSessionMessages(pending.messages);
+            pending.completer.complete(
+              SyncBatch(
+                messages: List.unmodifiable(pending.messages),
+                cursor: '$nextSince',
+                hasMore: hasMore,
+              ),
+            );
+          }
+        }
       default:
         break;
+    }
+  }
+
+  void _mergeSessionMessages(Iterable<InternetMessage> incoming) {
+    for (final message in incoming) {
+      if (_messages.every((existing) => existing.id != message.id)) {
+        _messages.add(message);
+      }
     }
   }
 
@@ -138,8 +171,35 @@ final class AprsMessagesTransport
   }
 
   @override
-  Future<SyncBatch> sync({required String token, String? cursor}) async =>
-      SyncBatch(messages: List.unmodifiable(_messages), cursor: '${_messages.length}');
+  Future<SyncBatch> sync({required String token, String? cursor}) {
+    final result = Completer<SyncBatch>();
+    _operationTail = _operationTail.then((_) async {
+      try {
+        result.complete(await _syncOne(cursor));
+      } on Object catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    });
+    return result.future;
+  }
+
+  Future<SyncBatch> _syncOne(String? cursor) async {
+    if (_closed || session.state != AprsSessionState.available) {
+      throw StateError('APRS OpenQSP session is not available');
+    }
+    final since = cursor == null ? 0 : int.tryParse(cursor);
+    if (since == null || since < 0 || since > 0xffffffff) {
+      throw ArgumentError.value(cursor, 'cursor', 'Invalid APRS message cursor');
+    }
+    final pending = _PendingSync();
+    _pendingSync = pending;
+    try {
+      await _sendObject(OpenQspGetNewMessages(since: since, max: 20));
+      return await pending.completer.future.timeout(responseTimeout);
+    } finally {
+      if (identical(_pendingSync, pending)) _pendingSync = null;
+    }
+  }
 
   @override
   Future<void> markConversationRead({
@@ -158,7 +218,7 @@ final class AprsMessagesTransport
     required String token,
   }) {
     final result = Completer<InternetMessage>();
-    _sendTail = _sendTail.then((_) async {
+    _operationTail = _operationTail.then((_) async {
       try {
         result.complete(await _sendOne(remoteCallsign, text));
       } on Object catch (error, stackTrace) {
@@ -260,11 +320,20 @@ final class AprsMessagesTransport
       session.removeListener(_onSessionChanged);
       _tnc.removeListener(_onTncChanged);
     }
-    final pending = _storedResponse;
-    if (pending != null && !pending.isCompleted) {
-      pending.completeError(StateError('APRS messages transport closed'));
+    final stored = _storedResponse;
+    if (stored != null && !stored.isCompleted) {
+      stored.completeError(StateError('APRS messages transport closed'));
+    }
+    final sync = _pendingSync;
+    if (sync != null && !sync.completer.isCompleted) {
+      sync.completer.completeError(StateError('APRS messages transport closed'));
     }
     await _events.close();
     await _connections.close();
   }
+}
+
+final class _PendingSync {
+  final List<InternetMessage> messages = [];
+  final Completer<SyncBatch> completer = Completer<SyncBatch>();
 }
