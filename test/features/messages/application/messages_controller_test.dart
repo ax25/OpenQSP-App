@@ -46,6 +46,7 @@ void main() {
     realtime.emit(MessageReceived(newer));
     await Future<void>.delayed(Duration.zero);
     expect(controller.historyFor('N0CALL').map((item) => item.id), ['1', '2']);
+    expect(repository.markedReadPeers, ['N0CALL']);
   });
 
   test('incoming peer creates conversation and local unread is cleared on open', () async {
@@ -66,6 +67,33 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(repository.lastSentText, 'hello');
     expect(controller.historyFor('N0CALL'), hasLength(1));
+  });
+
+  test('delivery and read events advance sent message state', () async {
+    repository.items.addAll([
+      message('1', from: 'EA3GNU', to: 'N0CALL', day: 1),
+      message('2', from: 'EA3GNU', to: 'N0CALL', day: 2),
+    ]);
+    await controller.start();
+
+    realtime.emit(
+      MessageDelivered(
+        messageId: '1',
+        deliveredAt: DateTime.utc(2026, 1, 3),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      controller.historyFor('N0CALL').first.deliveryStatus,
+      MessageDeliveryStatus.delivered,
+    );
+
+    realtime.emit(const MessageRead(peer: 'N0CALL', lastReadMessageId: '2'));
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      controller.historyFor('N0CALL').map((item) => item.deliveryStatus),
+      [MessageDeliveryStatus.read, MessageDeliveryStatus.read],
+    );
   });
 
   test('send rejects blank and oversized messages', () async {
@@ -107,17 +135,20 @@ InternetMessage message(
   required String from,
   required String to,
   required int day,
+  MessageDeliveryStatus deliveryStatus = MessageDeliveryStatus.stored,
 }) => InternetMessage(
   id: id,
   from: from,
   to: to,
   body: 'message $id',
   createdAt: DateTime.utc(2026, 1, day),
+  deliveryStatus: deliveryStatus,
 );
 
 class FakeRepository implements MessagesRepository {
   final items = <InternetMessage>[];
   final syncItems = <InternetMessage>[];
+  final markedReadPeers = <String>[];
   String? lastSentText;
   String? lastSyncCursor;
   InternetMessage? sent;
@@ -151,6 +182,14 @@ class FakeRepository implements MessagesRepository {
       to: remoteCallsign,
       day: 3,
     );
+  }
+
+  @override
+  Future<void> markConversationRead({
+    required String remoteCallsign,
+    required String token,
+  }) async {
+    markedReadPeers.add(remoteCallsign);
   }
 
   @override
