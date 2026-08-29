@@ -49,6 +49,31 @@ void main() {
     expect(() => codec.encode(const OpenQspStored(), unsolicited: true), throwsA(isA<OpenQspInvalidFieldException>()));
   });
 
+  group('CAPABILITIES protocol_version', () {
+    test('rejects zero while encoding', () {
+      expect(
+        () => codec.encode(const OpenQspCapabilities(protocolVersion: 0, capabilities: 0x0f)),
+        throwsA(isA<OpenQspInvalidFieldException>()),
+      );
+    });
+
+    test('rejects zero while decoding', () {
+      expect(
+        () => codec.decode([0x01, 0x46, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0x0f]),
+        throwsA(isA<OpenQspInvalidFieldException>()),
+      );
+    });
+
+    test('accepts the canonical protocol version', () {
+      final decoded = codec.decode([0x01, 0x46, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x0f]);
+      final capabilities = decoded.object as OpenQspCapabilities;
+
+      expect(capabilities.protocolVersion, 1);
+      expect(capabilities.capabilities, 0x0f);
+      expect(codec.encode(capabilities), [0x01, 0x46, 0x00, 0x05, 0x01, 0x00, 0x00, 0x00, 0x0f]);
+    });
+  });
+
   group('malformed traffic is controlled', () {
     void invalid(List<int> bytes, [Matcher? matcher]) => expect(() => codec.decode(bytes), throwsA(matcher ?? isA<OpenQspProtocolException>()));
     test('empty/header truncated', () { invalid([]); invalid([1, 2, 0]); });

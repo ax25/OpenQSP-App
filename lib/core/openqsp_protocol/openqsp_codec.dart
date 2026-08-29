@@ -40,7 +40,7 @@ final class OpenQspCodec {
       case OpenQspError(:final requestOperation, :final errorCode, :final detail):
         writer.u8(requestOperation, 'request_operation'); writer.u8(errorCode.code, 'error_code'); writer.text(detail, 'detail', 0, 64);
       case OpenQspCapabilities(:final protocolVersion, :final capabilities):
-        writer.u8(protocolVersion, 'protocol_version'); writer.u32(capabilities, 'capabilities');
+        writer.rangedU8(protocolVersion, 'protocol_version', 1, 255); writer.u32(capabilities, 'capabilities');
     }
     if (writer.length > openQspMaxPayloadLength) throw const OpenQspFrameTooLargeException('payload exceeds 255 bytes');
     return Uint8List.fromList([openQspVersion, operation.code, unsolicited ? openQspFlagUnsolicited : 0, writer.length, ...writer.bytes]);
@@ -97,7 +97,7 @@ final class OpenQspCodec {
         if (code == null) throw const OpenQspInvalidFieldException('unknown ERROR code');
         return OpenQspError(requestOperation: request, errorCode: code, detail: r.text('detail', 0, 64));
       case OpenQspOperation.capabilities:
-        return OpenQspCapabilities(protocolVersion: r.u8('protocol_version'), capabilities: r.u32('capabilities'));
+        return OpenQspCapabilities(protocolVersion: r.rangedU8('protocol_version', 1, 255), capabilities: r.u32('capabilities'));
     }
   }
 }
