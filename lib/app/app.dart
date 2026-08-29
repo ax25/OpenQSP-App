@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../core/network/server_status_client.dart';
 import '../features/auth/application/auth_session.dart';
 import '../features/auth/data/auth_client.dart';
 import '../features/auth/data/auth_token_store.dart';
+import '../features/aprs/application/aprs_session_controller.dart';
 import '../features/aprs/application/tnc_settings_controller.dart';
 import '../features/aprs/data/bluetooth_tnc_service.dart';
 import '../features/aprs/data/bluetooth_tnc_storage.dart';
@@ -43,6 +46,8 @@ class _OpenQspAppState extends State<OpenQspApp> {
   late final AuthSession _authSession;
   String? _callsign;
   bool _loading = true;
+  TncSettingsController? _tncController;
+  AprsSessionController? _aprsSession;
   final _navigatorKey = GlobalKey<NavigatorState>();
 
   @override
@@ -56,23 +61,49 @@ class _OpenQspAppState extends State<OpenQspApp> {
     _loadCallsign();
   }
 
+  TncSettingsController _buildTncController(String callsign) =>
+      widget.tncControllerFactory?.call() ??
+      TncSettingsController(
+        storage: PreferencesBluetoothTncStorage(),
+        service: AndroidBluetoothTncService(),
+        sourceCallsign: callsign,
+      );
+
+  void _replaceAprsSession(String callsign) {
+    final oldSession = _aprsSession;
+    final oldTnc = _tncController;
+    if (oldSession != null && oldSession.active) {
+      unawaited(oldSession.deactivate());
+    }
+    oldSession?.dispose();
+    oldTnc?.dispose();
+
+    final tnc = _buildTncController(callsign);
+    _tncController = tnc;
+    _aprsSession = AprsSessionController(tncController: tnc);
+  }
+
   Future<void> _loadCallsign() async {
     final callsign = await _store.read();
-    if (mounted) {
-      setState(() {
-        _callsign = callsign;
-        _loading = false;
-      });
-    }
+    if (!mounted) return;
+    if (callsign != null) _replaceAprsSession(callsign);
+    setState(() {
+      _callsign = callsign;
+      _loading = false;
+    });
   }
 
   Future<void> _saveCallsign(String callsign) async {
     await _store.write(callsign);
-    if (mounted) setState(() => _callsign = callsign);
+    if (!mounted) return;
+    if (_callsign != callsign) _replaceAprsSession(callsign);
+    setState(() => _callsign = callsign);
   }
 
   @override
   void dispose() {
+    _aprsSession?.dispose();
+    _tncController?.dispose();
     widget.serverStatusClient.close();
     widget.authClient.close();
     super.dispose();
@@ -80,6 +111,7 @@ class _OpenQspAppState extends State<OpenQspApp> {
 
   @override
   Widget build(BuildContext context) {
+    final aprsSession = _aprsSession;
     return MaterialApp(
       title: 'OpenQSP',
       navigatorKey: _navigatorKey,
@@ -95,18 +127,16 @@ class _OpenQspAppState extends State<OpenQspApp> {
               authSession: _authSession,
               messagesRepository: widget.messagesRepository,
               messagesRealtimeFactory: widget.messagesRealtimeFactory,
-              onOpenSettings: () => _navigatorKey.currentState!.push<void>(
-                MaterialPageRoute(
-                  builder: (_) => SettingsScreen(
-                    tncController: widget.tncControllerFactory?.call() ??
-                        TncSettingsController(
-                          storage: PreferencesBluetoothTncStorage(),
-                          service: AndroidBluetoothTncService(),
-                          sourceCallsign: _callsign,
+              aprsSession: aprsSession,
+              onOpenSettings: aprsSession == null
+                  ? null
+                  : () => _navigatorKey.currentState!.push<void>(
+                      MaterialPageRoute(
+                        builder: (_) => SettingsScreen(
+                          tncController: aprsSession.tncController,
                         ),
-                  ),
-                ),
-              ),
+                      ),
+                    ),
               onEditCallsign: () async {
                 await _navigatorKey.currentState!.push<void>(
                   MaterialPageRoute(
