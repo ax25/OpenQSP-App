@@ -130,6 +130,35 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                 ),
               ),
             ],
+            const SizedBox(height: 14),
+            Text(
+              'Diagnóstico AX.25',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 10),
+            _ValueRow(
+              label: 'RX AX.25 frames',
+              value: '${controller.rxAx25Frames}',
+            ),
+            const SizedBox(height: 6),
+            _ValueRow(
+              label: 'Errores AX.25',
+              value: '${controller.ax25DecodeErrors}',
+            ),
+            if (controller.ax25Activity.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ...controller.ax25Activity.map(
+                (line) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: SelectableText(
+                    line,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             Wrap(
               spacing: 10,

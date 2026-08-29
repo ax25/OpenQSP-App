@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../ax25/ax25_decoder.dart';
+import '../ax25/ax25_frame.dart';
 import '../data/bluetooth_tnc_service.dart';
 import '../data/bluetooth_tnc_storage.dart';
 import '../domain/tnc_connection_state.dart';
@@ -21,6 +23,7 @@ class TncSettingsController extends ChangeNotifier {
       rxKissFrames++;
       _activity.insert(0, 'RX  ${_hex(const KissEncoder().encode(frame))}');
       if (_activity.length > 10) _activity.removeLast();
+      if (frame.port == 0 && frame.command == 0) _decodeAx25(frame.payload);
       _notify();
     });
     _connectionLossSubscription = service.unexpectedDisconnections.listen((id) {
@@ -46,13 +49,51 @@ class TncSettingsController extends ChangeNotifier {
   int rxKissFrames = 0;
   int txKissFrames = 0;
   final List<String> _activity = [];
+  final List<String> _ax25Activity = [];
+  static const Ax25Decoder _ax25Decoder = Ax25Decoder();
+  int rxAx25Frames = 0;
+  int ax25DecodeErrors = 0;
 
   List<String> get kissActivity => List.unmodifiable(_activity);
+  List<String> get ax25Activity => List.unmodifiable(_ax25Activity);
   bool get kissReady => state == TncConnectionState.connected;
 
   static String _hex(Iterable<int> bytes) => bytes
       .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
       .join(' ');
+
+  void _decodeAx25(List<int> payload) {
+    try {
+      final frame = _ax25Decoder.decode(payload);
+      rxAx25Frames++;
+      _ax25Activity.insert(0, _describeAx25(frame));
+      if (_ax25Activity.length > 10) _ax25Activity.removeLast();
+      if (kDebugMode) {
+        debugPrint(
+          'AX.25 frame decoded: ${frame.source} > ${frame.destination}',
+        );
+      }
+    } on Ax25DecodeException catch (error) {
+      ax25DecodeErrors++;
+      if (kDebugMode) debugPrint('AX.25 decode error: ${error.message}');
+    }
+  }
+
+  static String _describeAx25(Ax25Frame frame) {
+    final via = frame.digipeaters.isEmpty
+        ? '-'
+        : frame.digipeaters.map((address) => address.pathText).join(',');
+    final pid = frame.pid == null
+        ? '-'
+        : frame.pid!.toRadixString(16).padLeft(2, '0').toUpperCase();
+    final control = frame.control
+        .toRadixString(16)
+        .padLeft(2, '0')
+        .toUpperCase();
+    return 'SRC: ${frame.source}  DST: ${frame.destination}\n'
+        'VIA: $via  CTRL: $control  PID: $pid\n'
+        'INFO: ${frame.informationText}';
+  }
 
   Future<void> sendKiss(KissFrame frame) async {
     await _kissTransport.send(frame);
