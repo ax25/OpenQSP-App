@@ -6,6 +6,7 @@ import '../../../core/openqsp_protocol/openqsp_codec.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../../aprs/aprs/aprs_message_encoder.dart';
+import '../../aprs/aprs/aprs_packet.dart';
 import '../../aprs/application/aprs_session_controller.dart';
 import '../../aprs/application/tnc_settings_controller.dart';
 import '../../aprs/ax25/ax25_address.dart';
@@ -243,9 +244,7 @@ final class AprsMessagesTransport
   );
 
   static String _serverMessageId(String recipient, int sequence) =>
-      base64Url
-          .encode(utf8.encode('$recipient:$sequence'))
-          .replaceAll('=', '');
+      base64Url.encode(utf8.encode('$recipient:$sequence')).replaceAll('=', '');
 
   static String _randomTransactionId() {
     final value = Random.secure().nextInt(36 * 36 * 36);
