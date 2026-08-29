@@ -6,6 +6,7 @@ import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_service.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_storage.dart';
 import 'package:openqsp_app/features/aprs/domain/tnc_connection_state.dart';
 import 'package:openqsp_app/features/aprs/domain/tnc_device.dart';
+import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
 
 class MemoryTncStorage implements BluetoothTncStorage {
   TncDevice? value;
@@ -18,11 +19,25 @@ class MemoryTncStorage implements BluetoothTncStorage {
 }
 
 class FakeTncService implements BluetoothTncService {
+  final bytes = StreamController<List<int>>.broadcast();
+  final losses = StreamController<int>.broadcast();
   Object? error;
   bool connected = false;
   List<TncDevice> devices = const [];
   Future<void>? disconnectPending;
   int disconnectCalls = 0;
+  int? _activeConnectionId;
+  int nextConnectionId = 1;
+  Object? sendError;
+
+  @override
+  int? get activeConnectionId => _activeConnectionId;
+
+  @override
+  Stream<List<int>> get incomingBytes => bytes.stream;
+
+  @override
+  Stream<int> get unexpectedDisconnections => losses.stream;
 
   @override
   Future<List<TncDevice>> bondedDevices() async {
@@ -34,14 +49,21 @@ class FakeTncService implements BluetoothTncService {
   Future<void> connect(TncDevice device) async {
     if (error case final Object value) throw value;
     connected = true;
+    _activeConnectionId = nextConnectionId++;
   }
 
   @override
   Future<void> disconnect() async {
     disconnectCalls++;
     connected = false;
+    _activeConnectionId = null;
     final pending = disconnectPending;
     if (pending != null) await pending;
+  }
+
+  @override
+  Future<void> sendBytes(List<int> data) async {
+    if (sendError case final Object value) throw value;
   }
 }
 
@@ -104,6 +126,81 @@ void main() {
     await controller.connect();
     expect(controller.state, TncConnectionState.error);
     expect(controller.failure, TncFailure.connectionFailed);
+  });
+
+  test('unexpected loss of the active connection becomes an error', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.connect();
+
+    service.losses.add(service.activeConnectionId!);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.state, TncConnectionState.error);
+    expect(controller.failure, TncFailure.connectionFailed);
+  });
+
+  test('voluntary disconnect does not report a connection error', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.connect();
+    final oldConnection = service.activeConnectionId!;
+
+    await controller.disconnect();
+    service.losses.add(oldConnection);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.state, TncConnectionState.configured);
+    expect(controller.failure, isNull);
+  });
+
+  test('late loss from an old connection cannot affect a reconnection', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.connect();
+    final oldConnection = service.activeConnectionId!;
+    await controller.disconnect();
+    await controller.connect();
+
+    service.losses.add(oldConnection);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.state, TncConnectionState.connected);
+    expect(controller.failure, isNull);
+    expect(service.activeConnectionId, isNot(oldConnection));
+  });
+
+  test('active write failure is propagated and its loss updates state', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.connect();
+    final connectionId = service.activeConnectionId!;
+    service.sendError = const TncServiceException(TncFailure.connectionFailed);
+
+    await expectLater(
+      controller.sendKiss(KissFrame(port: 0, command: 0, payload: [1])),
+      throwsA(isA<TncServiceException>()),
+    );
+    service.losses.add(connectionId);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.state, TncConnectionState.error);
+    expect(controller.failure, TncFailure.connectionFailed);
+  });
+
+  test('late write loss from an old connection is ignored after reconnect', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.connect();
+    final oldConnection = service.activeConnectionId!;
+    await controller.disconnect();
+    await controller.connect();
+
+    service.losses.add(oldConnection);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.state, TncConnectionState.connected);
+    expect(controller.failure, isNull);
   });
 
   test('permission denial while listing is controlled and retryable', () async {
