@@ -12,9 +12,9 @@ class MessagesController extends ChangeNotifier {
     required this.token,
     required this.repository,
     required this.realtime,
-    required this.localStore,
+    LocalMessagesStore? localStore,
     this.onAuthenticationRequired,
-  });
+  }) : localStore = localStore ?? PreferencesLocalMessagesStore();
 
   final String callsign;
   final String token;
@@ -119,7 +119,11 @@ class MessagesController extends ChangeNotifier {
         await localStore.upsertAll(callsign, batch.messages);
         _mergeAll(batch.messages);
         cursor = batch.cursor;
-        await localStore.setCursor(callsign, repository.syncCursorKey, cursor);
+        await localStore.setCursor(
+          callsign,
+          repository.syncCursorKey,
+          cursor,
+        );
         hasMore = batch.hasMore;
         pages++;
         if (pages > 10000) {
@@ -232,7 +236,9 @@ class MessagesController extends ChangeNotifier {
     for (var index = 0; index <= target; index++) {
       final message = history[index];
       if (message.directionFor(callsign) != MessageDirection.sent) continue;
-      final updated = message.copyWith(deliveryStatus: MessageDeliveryStatus.read);
+      final updated = message.copyWith(
+        deliveryStatus: MessageDeliveryStatus.read,
+      );
       _messagesById[message.id] = updated;
       changed.add(updated);
     }
