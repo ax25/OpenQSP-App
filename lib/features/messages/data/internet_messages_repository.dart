@@ -15,7 +15,8 @@ class MessagesHttpException implements Exception {
   String toString() => 'Messages request failed ($statusCode)';
 }
 
-class InternetMessagesRepository implements MessagesRepository {
+class InternetMessagesRepository
+    implements MessagesRepository, MessagesSyncCursorNamespace {
   InternetMessagesRepository({
     required Uri baseUri,
     http.Client? httpClient,
