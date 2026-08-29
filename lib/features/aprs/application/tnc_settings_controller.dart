@@ -22,6 +22,9 @@ import '../openqsp_carriage/openqsp_aprs_carriage.dart';
 
 enum OpenQspCheckState { notChecked, waiting, available, noResponse, error }
 
+/// APRS application destination (tocall), distinct from the message addressee.
+const openQspAprsTocall = 'APOQSP';
+
 class TncSettingsController extends ChangeNotifier {
   TncSettingsController({
     required this.storage,
@@ -128,11 +131,13 @@ class TncSettingsController extends ChangeNotifier {
       if (kDebugMode) debugPrint('APRS parse error: ${packet.reason}');
       return;
     }
-    if (packet.isForOpenQsp) openQspRxPackets++;
     switch (packet) {
       case AprsTextMessage():
         aprsMessages++;
-        if (packet.isForOpenQsp) _decodeOpenQsp(packet);
+        if (_isOpenQspResponse(packet)) {
+          openQspRxPackets++;
+          _decodeOpenQsp(packet);
+        }
         break;
       case AprsAck():
         aprsAcks++;
@@ -148,6 +153,15 @@ class TncSettingsController extends ChangeNotifier {
     _aprsActivity.insert(0, _describeAprs(packet));
     if (_aprsActivity.length > 10) _aprsActivity.removeLast();
     if (kDebugMode) debugPrint(_aprsLog(packet));
+  }
+
+  bool _isOpenQspResponse(AprsTextMessage message) {
+    final call = sourceCallsign;
+    if (call == null || message.frame.source.callsign != openQspAprsAddressee) {
+      return false;
+    }
+    final localAddressee = aprsSsid == 0 ? call : '$call-$aprsSsid';
+    return message.addressee == localAddressee;
   }
 
   void _decodeOpenQsp(AprsTextMessage message) {
@@ -213,7 +227,7 @@ class TncSettingsController extends ChangeNotifier {
         );
         final ax25 = _ax25Encoder.encodeUi(
           destination: const Ax25Address(
-            callsign: 'OQSP',
+            callsign: openQspAprsTocall,
             ssid: 0,
             hasBeenRepeated: false,
             isLast: false,
@@ -301,6 +315,7 @@ class TncSettingsController extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    if (state != TncConnectionState.loading) return;
     device = await storage.read();
     if (storage is AprsSsidStorage) {
       aprsSsid = await (storage as AprsSsidStorage).readSsid();

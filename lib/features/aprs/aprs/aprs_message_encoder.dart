@@ -14,7 +14,9 @@ final class AprsMessageEncoder {
     required String body,
     String? messageId,
   }) {
-    if (!RegExp(r'^[A-Z0-9]{1,9}$').hasMatch(addressee)) {
+    if (!RegExp(r'^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$')
+            .hasMatch(addressee) ||
+        addressee.length > 9) {
       throw const AprsMessageEncodeException('invalid APRS addressee');
     }
     if (body.isEmpty ||
