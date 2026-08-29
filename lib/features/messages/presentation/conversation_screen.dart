@@ -154,8 +154,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
                         Flexible(
                           child: Card(
                             color: sent
-                                ? colors.primaryContainer
-                                : colors.surfaceContainerHighest,
+                                ? colors.surfaceContainerHighest
+                                : colors.primaryContainer,
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 14,
@@ -165,8 +165,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
                                 message.body,
                                 style: TextStyle(
                                   color: sent
-                                      ? colors.onPrimaryContainer
-                                      : colors.onSurfaceVariant,
+                                      ? colors.onSurfaceVariant
+                                      : colors.onPrimaryContainer,
                                 ),
                               ),
                             ),
