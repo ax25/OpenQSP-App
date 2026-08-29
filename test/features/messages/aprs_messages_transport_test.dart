@@ -34,7 +34,7 @@ class _MemoryStorage implements BluetoothTncStorage {
 
 class _FakeTncService implements BluetoothTncService {
   final bytes = StreamController<List<int>>.broadcast();
-  final losses = StreamController<int>.broadcast();
+  final losses = StreamController<int>>.broadcast();
   final List<List<int>> sentBytes = [];
   int? _activeConnectionId;
 
@@ -141,9 +141,14 @@ void main() {
     expect(received.message.from, 'EA3ABC');
     expect(received.message.to, 'EA3GNU');
     expect(received.message.body, 'mensaje recibido');
+    expect(received.syncCursor, isNull);
   });
 
   test('sync collects GET_NEW_MESSAGES page until END', () async {
+    final event = transport.events
+        .where((value) => value is MessageReceived)
+        .cast<MessageReceived>()
+        .first;
     final pending = transport.sync(token: '', cursor: '6');
     await Future<void>.delayed(Duration.zero);
     expect(service.sentBytes, isNotEmpty);
@@ -170,13 +175,15 @@ void main() {
       transactionId: '011',
     );
 
+    final received = await event;
+    expect(received.syncCursor, '7');
     final batch = await pending;
     expect(batch.cursor, '7');
     expect(batch.hasMore, isFalse);
     expect(batch.messages.single.body, 'new seven');
   });
 
-  test('complete messages remain visible when sync times out before END', () async {
+  test('complete messages advance cursor even if sync times out before END', () async {
     final received = transport.events
         .where((value) => value is MessageReceived)
         .cast<MessageReceived>()
@@ -213,6 +220,7 @@ void main() {
       'first complete message',
       'second complete message',
     ]);
+    expect(events.map((event) => event.syncCursor), ['1', '2']);
 
     final history = await transport.messages(callsign: 'EA3GNU', token: '');
     expect(history.map((message) => message.body), [
