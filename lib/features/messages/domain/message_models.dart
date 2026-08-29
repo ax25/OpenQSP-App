@@ -121,8 +121,15 @@ sealed class MessagingEvent {
 }
 
 class MessageReceived extends MessagingEvent {
-  const MessageReceived(this.message);
+  const MessageReceived(this.message, {this.syncCursor});
+
   final InternetMessage message;
+
+  /// Optional transport cursor that becomes safe to persist once [message]
+  /// itself has been durably stored locally. APRS uses this for progressive
+  /// ordered sync so an interrupted page can resume after the last complete
+  /// message instead of retransmitting the whole page.
+  final String? syncCursor;
 }
 
 class MessageDelivered extends MessagingEvent {

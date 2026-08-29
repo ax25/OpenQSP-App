@@ -68,10 +68,34 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
   Future<String?> cursor(String callsign, String transport) async {
     await _writeTail;
     final preferences = await _preferences;
+    final normalizedCallsign = _normalize(callsign);
     final cursors = _decodeCursors(
-      preferences.getString(_cursorsKey(callsign)),
+      preferences.getString(_cursorsKey(normalizedCallsign)),
     );
-    return cursors[transport];
+    final storedCursor = cursors[transport];
+    if (storedCursor != null || transport != 'aprs') return storedCursor;
+
+    // Older clients could persist complete canonical messages without ever
+    // persisting an APRS sync cursor. Recover only the largest contiguous
+    // mailbox prefix (1..N). Never use the highest visible sequence directly:
+    // a gap means the missing message must still be requested over APRS.
+    final storedMessages = _decodeMessages(
+      preferences.getString(_messagesKey(normalizedCallsign)),
+    );
+    final sequences = <int>{};
+    for (final message in storedMessages) {
+      if (_normalize(message.to) != normalizedCallsign) continue;
+      final sequence = _canonicalMailboxSequence(
+        message.id,
+        normalizedCallsign,
+      );
+      if (sequence != null) sequences.add(sequence);
+    }
+    var contiguous = 0;
+    while (sequences.contains(contiguous + 1)) {
+      contiguous++;
+    }
+    return contiguous == 0 ? null : '$contiguous';
   }
 
   @override
@@ -136,6 +160,23 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
       );
     } on Object {
       return <String, String>{};
+    }
+  }
+
+  static int? _canonicalMailboxSequence(String id, String recipient) {
+    if (id.isEmpty || id.startsWith('aprs-local-')) return null;
+    try {
+      final paddingLength = (4 - id.length % 4) % 4;
+      final padded = '$id${List.filled(paddingLength, '=').join()}';
+      final decoded = utf8.decode(base64Url.decode(padded));
+      final separator = decoded.lastIndexOf(':');
+      if (separator <= 0 || separator == decoded.length - 1) return null;
+      if (_normalize(decoded.substring(0, separator)) != recipient) return null;
+      final sequence = int.tryParse(decoded.substring(separator + 1));
+      if (sequence == null || sequence <= 0 || sequence > 0xffffffff) return null;
+      return sequence;
+    } on Object {
+      return null;
     }
   }
 

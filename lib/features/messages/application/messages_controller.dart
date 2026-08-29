@@ -28,6 +28,7 @@ class MessagesController extends ChangeNotifier {
   StreamSubscription<MessagingEvent>? _events;
   StreamSubscription<RealtimeConnectionState>? _connections;
   Future<void>? _reconcileInFlight;
+  Future<void> _eventTail = Future<void>.value();
   bool _hasConnected = false;
   bool loading = false;
   String? error;
@@ -49,7 +50,9 @@ class MessagesController extends ChangeNotifier {
   Future<void> start() async {
     await _loadLocal();
     _events ??= realtime.events.listen(
-      (event) => unawaited(_applyEvent(event)),
+      (event) {
+        _eventTail = _eventTail.then((_) => _applyEvent(event));
+      },
       onError: (_) {
         connectionState = RealtimeConnectionState.disconnected;
         notifyListeners();
@@ -211,7 +214,7 @@ class MessagesController extends ChangeNotifier {
 
   Future<void> _applyEvent(MessagingEvent event) async {
     switch (event) {
-      case MessageReceived(:final message):
+      case MessageReceived(:final message, :final syncCursor):
         final isNew = !_containsLogicalMessage(message);
         final peer = _key(message.peerFor(callsign));
         if (isNew &&
@@ -224,6 +227,9 @@ class MessagesController extends ChangeNotifier {
         }
         await localStore.upsert(callsign, message);
         _merge(message);
+        if (syncCursor != null) {
+          await localStore.setCursor(callsign, _syncCursorKey, syncCursor);
+        }
       case MessageDelivered(:final messageId, :final deliveredAt):
         final current = _messagesById[messageId];
         if (current != null &&
