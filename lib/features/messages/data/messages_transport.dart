@@ -30,7 +30,7 @@ abstract interface class MessagesSyncCursorNamespace {
 
 String messagesSyncCursorKey(MessagesRepository repository) {
   if (repository is MessagesSyncCursorNamespace) {
-    return repository.syncCursorKey;
+    return (repository as MessagesSyncCursorNamespace).syncCursorKey;
   }
   return 'internet';
 }
