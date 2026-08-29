@@ -8,7 +8,7 @@ import 'package:openqsp_app/features/messages/domain/message_models.dart';
 import 'package:openqsp_app/features/messages/presentation/conversation_screen.dart';
 
 void main() {
-  testWidgets('groups messages by local day, shows times, and preserves alignment', (
+  testWidgets('groups messages by local day, shows times, alignment and status ticks', (
     tester,
   ) async {
     final now = DateTime.now();
@@ -17,9 +17,19 @@ void main() {
     final older = DateTime(now.year, now.month, now.day - 3, 9, 20);
     final repository = _Repository([
       _message('old', older, from: 'N0CALL'),
-      _message('yesterday', yesterday, from: 'EA3GNU'),
+      _message(
+        'yesterday',
+        yesterday,
+        from: 'EA3GNU',
+        deliveryStatus: MessageDeliveryStatus.delivered,
+      ),
       _message('today-1', today, from: 'N0CALL'),
-      _message('today-2', today.add(const Duration(minutes: 2)), from: 'EA3GNU'),
+      _message(
+        'today-2',
+        today.add(const Duration(minutes: 2)),
+        from: 'EA3GNU',
+        deliveryStatus: MessageDeliveryStatus.read,
+      ),
     ]);
     final controller = _controller(repository);
 
@@ -53,6 +63,11 @@ void main() {
       tester.widget<Align>(find.byKey(const Key('message-today-2'))).alignment,
       Alignment.centerRight,
     );
+    expect(find.byKey(const Key('status-yesterday')), findsOneWidget);
+    expect(find.byKey(const Key('status-today-2')), findsOneWidget);
+    expect(find.bySemanticsLabel('Delivered to recipient'), findsOneWidget);
+    expect(find.bySemanticsLabel('Read by recipient'), findsOneWidget);
+    expect(find.byKey(const Key('status-today-1')), findsNothing);
   });
 
   testWidgets('composer limits input and refuses blank messages', (tester) async {
@@ -99,12 +114,14 @@ InternetMessage _message(
   String id,
   DateTime createdAt, {
   required String from,
+  MessageDeliveryStatus deliveryStatus = MessageDeliveryStatus.stored,
 }) => InternetMessage(
   id: id,
   from: from,
   to: from == 'EA3GNU' ? 'N0CALL' : 'EA3GNU',
   body: 'message $id',
   createdAt: createdAt,
+  deliveryStatus: deliveryStatus,
 );
 
 class _Repository implements MessagesRepository {
@@ -129,6 +146,12 @@ class _Repository implements MessagesRepository {
     sentTexts.add(text);
     return _message('sent-${sentTexts.length}', DateTime.now(), from: callsign);
   }
+
+  @override
+  Future<void> markConversationRead({
+    required String remoteCallsign,
+    required String token,
+  }) async {}
 
   @override
   Future<SyncBatch> sync({required String token, String? cursor}) async =>
