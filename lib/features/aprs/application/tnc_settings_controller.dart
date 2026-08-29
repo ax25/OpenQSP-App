@@ -2,7 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/openqsp_protocol/openqsp_codec.dart';
+import '../../../core/openqsp_protocol/openqsp_models.dart';
+import '../aprs/aprs_message_encoder.dart';
 import '../ax25/ax25_decoder.dart';
+import '../ax25/ax25_address.dart';
+import '../ax25/ax25_encoder.dart';
 import '../ax25/ax25_frame.dart';
 import '../aprs/aprs_packet.dart';
 import '../aprs/aprs_parser.dart';
@@ -13,9 +18,20 @@ import '../domain/tnc_device.dart';
 import '../kiss/kiss_encoder.dart';
 import '../kiss/kiss_frame.dart';
 import '../kiss/kiss_transport.dart';
+import '../openqsp_carriage/openqsp_aprs_carriage.dart';
+
+enum OpenQspCheckState { notChecked, waiting, available, noResponse, error }
+
+/// APRS application destination (tocall), distinct from the message addressee.
+const openQspAprsTocall = 'APOQSP';
 
 class TncSettingsController extends ChangeNotifier {
-  TncSettingsController({required this.storage, required this.service}) {
+  TncSettingsController({
+    required this.storage,
+    required this.service,
+    this.sourceCallsign,
+    this.openQspTimeout = const Duration(seconds: 20),
+  }) {
     _kissTransport = KissTransport(service);
     _byteSubscription = service.incomingBytes.listen((bytes) {
       rxBytes += bytes.length;
@@ -39,6 +55,8 @@ class TncSettingsController extends ChangeNotifier {
 
   final BluetoothTncStorage storage;
   final BluetoothTncService service;
+  final String? sourceCallsign;
+  final Duration openQspTimeout;
   TncConnectionState state = TncConnectionState.loading;
   TncDevice? device;
   TncFailure? failure;
@@ -63,6 +81,20 @@ class TncSettingsController extends ChangeNotifier {
   int aprsAcks = 0;
   int aprsRejects = 0;
   int openQspRxPackets = 0;
+  int openQspFragmentsRx = 0;
+  int openQspFramesRx = 0;
+  int openQspErrors = 0;
+  OpenQspFrameObject? lastOpenQspObject;
+  DateTime? lastValidOpenQspRx;
+  OpenQspCheckState openQspCheckState = OpenQspCheckState.notChecked;
+  int aprsSsid = 0;
+  Timer? _openQspTimer;
+  final OpenQspAprsReassembler _reassembler = OpenQspAprsReassembler();
+  final Map<String, DateTime> _completedOpenQspTransactions = {};
+  static const OpenQspCodec _openQspCodec = OpenQspCodec();
+  static const Ax25Encoder _ax25Encoder = Ax25Encoder();
+  static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
+  int _transactionSequence = 0;
 
   List<String> get kissActivity => List.unmodifiable(_activity);
   List<String> get ax25Activity => List.unmodifiable(_ax25Activity);
@@ -100,10 +132,16 @@ class TncSettingsController extends ChangeNotifier {
       if (kDebugMode) debugPrint('APRS parse error: ${packet.reason}');
       return;
     }
-    if (packet.isForOpenQsp) openQspRxPackets++;
     switch (packet) {
       case AprsTextMessage():
         aprsMessages++;
+        if (_isOpenQspResponse(packet)) {
+          openQspRxPackets++;
+          if (packet.messageId case final messageId?) {
+            unawaited(_sendAprsAck(messageId));
+          }
+          _decodeOpenQsp(packet);
+        }
         break;
       case AprsAck():
         aprsAcks++;
@@ -119,6 +157,141 @@ class TncSettingsController extends ChangeNotifier {
     _aprsActivity.insert(0, _describeAprs(packet));
     if (_aprsActivity.length > 10) _aprsActivity.removeLast();
     if (kDebugMode) debugPrint(_aprsLog(packet));
+  }
+
+  Future<void> _sendAprsAck(String messageId) async {
+    try {
+      final call = sourceCallsign;
+      if (call == null || !kissReady) return;
+      final information = _messageEncoder.encode(
+        addressee: openQspAprsAddressee,
+        body: 'ack$messageId',
+      );
+      final ax25 = _ax25Encoder.encodeUi(
+        destination: const Ax25Address(
+          callsign: openQspAprsTocall,
+          ssid: 0,
+          hasBeenRepeated: false,
+          isLast: false,
+        ),
+        source: Ax25Address(
+          callsign: call,
+          ssid: aprsSsid,
+          hasBeenRepeated: false,
+          isLast: true,
+        ),
+        information: information,
+      );
+      await sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
+    } on Object catch (error) {
+      if (kDebugMode) debugPrint('APRS ACK TX error: $error');
+    }
+  }
+
+  bool _isOpenQspResponse(AprsTextMessage message) {
+    final call = sourceCallsign;
+    if (call == null || message.frame.source.callsign != openQspAprsAddressee) {
+      return false;
+    }
+    final localAddressee = aprsSsid == 0 ? call : '$call-$aprsSsid';
+    return message.addressee == localAddressee;
+  }
+
+  void _decodeOpenQsp(AprsTextMessage message) {
+    try {
+      // AprsParser has already removed {messageId; parsing text avoids
+      // accidentally appending that suffix for a second time.
+      final fragment = parseFragment(message.text);
+      openQspFragmentsRx++;
+      final now = DateTime.now().toUtc();
+      _completedOpenQspTransactions.removeWhere(
+        (_, completedAt) => now.difference(completedAt) >= openQspAprsDefaultTtl,
+      );
+      final transactionKey =
+          '${message.frame.source}|${fragment.transactionId}';
+      if (_completedOpenQspTransactions.containsKey(transactionKey)) return;
+      final bytes = _reassembler.add(
+        peer: message.frame.source.toString(),
+        fragment: fragment,
+        now: now,
+      );
+      if (bytes == null) return;
+      final decoded = _openQspCodec.decode(bytes);
+      openQspFramesRx++;
+      lastOpenQspObject = decoded.object;
+      lastValidOpenQspRx = now;
+      _completedOpenQspTransactions[transactionKey] = now;
+      if (decoded.object is OpenQspCapabilities &&
+          openQspCheckState == OpenQspCheckState.waiting) {
+        _openQspTimer?.cancel();
+        openQspCheckState = OpenQspCheckState.available;
+      }
+    } on Object catch (error) {
+      openQspErrors++;
+      if (kDebugMode) debugPrint('OpenQSP APRS RX error: $error');
+    }
+  }
+
+  Future<void> setAprsSsid(int value) async {
+    if (value < 0 || value > 15) return;
+    aprsSsid = value;
+    if (storage is AprsSsidStorage) {
+      await (storage as AprsSsidStorage).writeSsid(value);
+    }
+    _notify();
+  }
+
+  Future<void> checkOpenQsp() async {
+    if (!kissReady) return;
+    final call = sourceCallsign;
+    if (call == null || !RegExp(r'^[A-Z0-9]{1,6}$').hasMatch(call)) {
+      openQspCheckState = OpenQspCheckState.error;
+      _notify();
+      return;
+    }
+    openQspCheckState = OpenQspCheckState.waiting;
+    _notify();
+    try {
+      final core = _openQspCodec.encode(const OpenQspGetCapabilities());
+      final transactionId = (_transactionSequence++ % 46656)
+          .toRadixString(36)
+          .toUpperCase()
+          .padLeft(3, '0');
+      final fragments = fragmentFrame(core, transactionId);
+      for (final fragment in fragments) {
+        final information = _messageEncoder.encode(
+          addressee: openQspAprsAddressee,
+          body: fragment.body,
+        );
+        final ax25 = _ax25Encoder.encodeUi(
+          destination: const Ax25Address(
+            callsign: openQspAprsTocall,
+            ssid: 0,
+            hasBeenRepeated: false,
+            isLast: false,
+          ),
+          source: Ax25Address(
+            callsign: call,
+            ssid: aprsSsid,
+            hasBeenRepeated: false,
+            isLast: true,
+          ),
+          information: information,
+        );
+        await sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
+      }
+      _openQspTimer?.cancel();
+      _openQspTimer = Timer(openQspTimeout, () {
+        if (openQspCheckState == OpenQspCheckState.waiting) {
+          openQspCheckState = OpenQspCheckState.noResponse;
+          _notify();
+        }
+      });
+    } on Object catch (error) {
+      openQspCheckState = OpenQspCheckState.error;
+      if (kDebugMode) debugPrint('OpenQSP APRS TX error: $error');
+      _notify();
+    }
   }
 
   static String _describeAprs(AprsPacket packet) {
@@ -180,7 +353,11 @@ class TncSettingsController extends ChangeNotifier {
   }
 
   Future<void> initialize() async {
+    if (state != TncConnectionState.loading) return;
     device = await storage.read();
+    if (storage is AprsSsidStorage) {
+      aprsSsid = await (storage as AprsSsidStorage).readSsid();
+    }
     state = device == null
         ? TncConnectionState.notConfigured
         : TncConnectionState.configured;
@@ -265,6 +442,7 @@ class TncSettingsController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _openQspTimer?.cancel();
     unawaited(_byteSubscription.cancel());
     unawaited(_frameSubscription.cancel());
     unawaited(_connectionLossSubscription.cancel());

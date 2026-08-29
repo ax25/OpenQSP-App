@@ -8,9 +8,26 @@ abstract interface class BluetoothTncStorage {
   Future<void> clear();
 }
 
-class PreferencesBluetoothTncStorage implements BluetoothTncStorage {
+abstract interface class AprsSsidStorage {
+  Future<int> readSsid();
+  Future<void> writeSsid(int ssid);
+}
+
+class PreferencesBluetoothTncStorage
+    implements BluetoothTncStorage, AprsSsidStorage {
   static const _idKey = 'tnc.bluetooth.id';
   static const _nameKey = 'tnc.bluetooth.name';
+  static const _ssidKey = 'tnc.aprs.ssid';
+
+  @override
+  Future<int> readSsid() async =>
+      (await SharedPreferences.getInstance()).getInt(_ssidKey) ?? 0;
+
+  @override
+  Future<void> writeSsid(int ssid) async {
+    if (ssid < 0 || ssid > 15) throw RangeError.range(ssid, 0, 15);
+    await (await SharedPreferences.getInstance()).setInt(_ssidKey, ssid);
+  }
 
   @override
   Future<TncDevice?> read() async {

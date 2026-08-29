@@ -102,6 +102,7 @@ class _OpenQspAppState extends State<OpenQspApp> {
                         TncSettingsController(
                           storage: PreferencesBluetoothTncStorage(),
                           service: AndroidBluetoothTncService(),
+                          sourceCallsign: _callsign,
                         ),
                   ),
                 ),

@@ -1,7 +1,15 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_models.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
+import 'package:openqsp_app/features/aprs/aprs/aprs_packet.dart';
+import 'package:openqsp_app/features/aprs/aprs/aprs_parser.dart';
+import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
+import 'package:openqsp_app/features/aprs/ax25/ax25_decoder.dart';
+import 'package:openqsp_app/features/aprs/ax25/ax25_encoder.dart';
+import 'package:openqsp_app/features/aprs/kiss/kiss_decoder.dart';
+import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_service.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_storage.dart';
 import 'package:openqsp_app/features/aprs/domain/tnc_connection_state.dart';
@@ -29,6 +37,7 @@ class FakeTncService implements BluetoothTncService {
   int? _activeConnectionId;
   int nextConnectionId = 1;
   Object? sendError;
+  final List<List<int>> sentBytes = [];
 
   @override
   int? get activeConnectionId => _activeConnectionId;
@@ -64,6 +73,7 @@ class FakeTncService implements BluetoothTncService {
   @override
   Future<void> sendBytes(List<int> data) async {
     if (sendError case final Object value) throw value;
+    sentBytes.add(List.of(data));
   }
 }
 
@@ -76,7 +86,11 @@ void main() {
   setUp(() {
     storage = MemoryTncStorage();
     service = FakeTncService();
-    controller = TncSettingsController(storage: storage, service: service);
+    controller = TncSettingsController(
+      storage: storage,
+      service: service,
+      sourceCallsign: 'EA3GNU',
+    );
   });
 
   test('without a stored TNC initializes as not configured', () async {
@@ -268,8 +282,177 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(controller.rxAx25Frames, 2);
     expect(controller.aprsMessages, 1);
-    expect(controller.openQspRxPackets, 1);
+    expect(controller.openQspRxPackets, 0);
     expect(controller.aprsActivity.single, contains('TEXT: HELLO'));
+  });
+
+  List<int> response({
+    required String source,
+    String body = 'Q1:ABC:00/01:A U',
+  }) {
+    final information = ':EA3GNU-5 :$body'.codeUnits;
+    final ax25 = const Ax25Encoder().encodeUi(
+      destination: const Ax25Address(
+        callsign: openQspAprsTocall,
+        ssid: 0,
+        hasBeenRepeated: false,
+        isLast: false,
+      ),
+      source: Ax25Address(
+        callsign: source,
+        ssid: 0,
+        hasBeenRepeated: false,
+        isLast: true,
+      ),
+      information: information,
+    );
+    return const KissEncoder().encode(
+      KissFrame(port: 0, command: 0, payload: ax25),
+    );
+  }
+
+  Future<AprsPacket> sentAprs(List<int> bytes) async {
+    final kiss = KissDecoder();
+    final frameFuture = kiss.frames.first;
+    kiss.add(bytes);
+    final frame = await frameFuture;
+    final packet = const AprsParser().parse(
+      const Ax25Decoder().decode(frame.payload),
+    )!;
+    await kiss.close();
+    return packet;
+  }
+
+  test('CAPABILITIES response from OQSP to the local APRS identity is decoded',
+      () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+    await controller.checkOpenQsp();
+
+    service.bytes.add(response(source: 'OQSP', body: 'Q1:ABC:00/01:AUYABQEAAAAP'));
+    await Future<void>.delayed(Duration.zero);
+
+    final object = controller.lastOpenQspObject as OpenQspCapabilities;
+    expect(object.protocolVersion, 1);
+    expect(object.capabilities, 0x0000000f);
+    expect(controller.openQspCheckState, OpenQspCheckState.available);
+  });
+
+  test('acknowledges every server retry and decodes CAPABILITIES only once',
+      () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+    await controller.checkOpenQsp();
+    final reply = response(
+      source: 'OQSP',
+      body: 'Q1:ACK:00/01:AUYABQEAAAAP{0A',
+    );
+
+    service.bytes.add(reply);
+    await Future<void>.delayed(Duration.zero);
+    service.bytes.add(reply);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.sentBytes, hasLength(3)); // probe plus two APRS ACKs
+    for (final bytes in service.sentBytes.skip(1)) {
+      final ack = await sentAprs(bytes) as AprsAck;
+      expect(ack.addressee, 'OQSP');
+      expect(ack.messageId, '0A');
+    }
+    final object = controller.lastOpenQspObject as OpenQspCapabilities;
+    expect(object.protocolVersion, 1);
+    expect(object.capabilities, 0x0000000f);
+    expect(controller.openQspFramesRx, 1);
+    expect(controller.openQspErrors, 0);
+  });
+
+  test('reassembles out-of-order Q1 fragments through the integrated RX path',
+      () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+    await controller.checkOpenQsp();
+
+    service.bytes.add(response(source: 'OQSP', body: 'Q1:MUL:01/02:EAAAAP'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.lastOpenQspObject, isNull);
+    service.bytes.add(response(source: 'OQSP', body: 'Q1:MUL:00/02:AUYABQ'));
+    await Future<void>.delayed(Duration.zero);
+
+    final object = controller.lastOpenQspObject as OpenQspCapabilities;
+    expect(object.protocolVersion, 1);
+    expect(object.capabilities, 0x0000000f);
+    expect(controller.openQspFramesRx, 1);
+  });
+
+  test('invalid OpenQSP bodies are isolated and valid RX continues', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+    await controller.checkOpenQsp();
+    expect(controller.openQspCheckState, OpenQspCheckState.waiting);
+
+    service.bytes.add(response(source: 'OQSP', body: 'not Q1'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.openQspErrors, 1);
+    expect(controller.openQspCheckState, OpenQspCheckState.waiting);
+    service.bytes.add(response(source: 'OQSP', body: 'Q1:bad'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.openQspErrors, 2);
+    expect(controller.openQspCheckState, OpenQspCheckState.waiting);
+
+    service.bytes.add(
+      response(source: 'OQSP', body: 'Q1:NEW:00/01:AUYABQEAAAAP'),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.lastOpenQspObject, isA<OpenQspCapabilities>());
+    expect(controller.openQspFramesRx, 1);
+    expect(controller.openQspCheckState, OpenQspCheckState.available);
+  });
+
+  test('valid Q1 from another station cannot satisfy the capability check',
+      () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+    await controller.checkOpenQsp();
+
+    service.bytes.add(response(source: 'OTHER', body: 'Q1:ABC:00/01:AUYABQEAAAAP'));
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.lastOpenQspObject, isNull);
+    expect(controller.openQspCheckState, OpenQspCheckState.waiting);
+  });
+
+  test('checkOpenQsp emits Core through Q1, APRS, AX.25 and KISS', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+
+    await controller.checkOpenQsp();
+
+    expect(service.sentBytes, hasLength(1));
+    final kiss = KissDecoder();
+    final frameFuture = kiss.frames.first;
+    kiss.add(service.sentBytes.single);
+    final kissFrame = await frameFuture;
+    final ax25 = const Ax25Decoder().decode(kissFrame.payload);
+    final aprs = const AprsParser().parse(ax25)! as AprsTextMessage;
+    expect(kissFrame.port, 0);
+    expect(kissFrame.command, 0);
+    expect(ax25.destination.callsign, openQspAprsTocall);
+    expect(ax25.source.toString(), 'EA3GNU-5');
+    expect(aprs.addressee, 'OQSP');
+    expect(aprs.text, 'Q1:000:00/01:AQUAAA');
+    await kiss.close();
   });
 
   test('dispose closes an active connection without later notifications', () async {

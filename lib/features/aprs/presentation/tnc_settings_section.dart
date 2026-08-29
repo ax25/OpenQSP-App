@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../application/tnc_settings_controller.dart';
 import '../domain/tnc_connection_state.dart';
 import '../domain/tnc_device.dart';
@@ -68,11 +69,20 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
       ..showSnackBar(SnackBar(content: Text(value)));
   }
 
+  String get _openQspStatus => switch (controller.openQspCheckState) {
+    OpenQspCheckState.notChecked => 'No comprobado',
+    OpenQspCheckState.waiting => 'Esperando respuesta…',
+    OpenQspCheckState.available => 'Disponible',
+    OpenQspCheckState.noResponse => 'Sin respuesta',
+    OpenQspCheckState.error => 'Error',
+  };
+
   @override
   Widget build(BuildContext context) {
     final state = controller.state;
     final busy = state == TncConnectionState.loading ||
         state == TncConnectionState.connecting;
+    final capabilities = controller.lastOpenQspObject;
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -80,162 +90,67 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'TNC KISS Bluetooth',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 18),
-            _ValueRow(label: 'Estado Bluetooth', value: state.label),
-            const SizedBox(height: 10),
-            _ValueRow(
-              label: 'Estado KISS',
-              value: controller.kissReady ? 'Preparado' : 'Inactivo',
-            ),
-            const SizedBox(height: 10),
-            _ValueRow(
-              label: 'Dispositivo',
-              value: controller.device?.name ?? 'Ninguno',
-              detail: controller.device?.id,
-            ),
-            if (controller.failure != null) ...[
-              const SizedBox(height: 14),
-              Text(
-                controller.failure!.message,
-                key: const Key('tncError'),
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
+            Text('TNC KISS Bluetooth', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 16),
+            _ValueRow(label: 'Estado', value: state.label),
+            const SizedBox(height: 8),
+            _ValueRow(label: 'Dispositivo', value: controller.device?.name ?? 'Ninguno'),
+            const SizedBox(height: 8),
+            Row(children: [
+              const SizedBox(width: 105, child: Text('SSID APRS:')),
+              DropdownButton<int>(
+                key: const Key('aprsSsid'),
+                value: controller.aprsSsid,
+                onChanged: busy ? null : (value) {
+                  if (value != null) controller.setAprsSsid(value);
+                },
+                items: [for (var value = 0; value <= 15; value++)
+                  DropdownMenuItem(value: value, child: Text('$value'))],
               ),
+            ]),
+            if (controller.failure != null) ...[
+              const SizedBox(height: 10),
+              Text(controller.failure!.message, key: const Key('tncError'),
+                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
             ],
-            const SizedBox(height: 18),
+            const SizedBox(height: 14),
+            Wrap(spacing: 10, runSpacing: 8, children: [
+              if (state != TncConnectionState.connected)
+                OutlinedButton.icon(key: const Key('selectTncButton'),
+                  onPressed: busy ? null : _selectDevice,
+                  icon: const Icon(Icons.bluetooth_searching), label: const Text('Seleccionar TNC')),
+              if (controller.device != null && state != TncConnectionState.connected)
+                FilledButton.icon(key: const Key('testTncButton'),
+                  onPressed: busy ? null : controller.connect,
+                  icon: const Icon(Icons.cable), label: const Text('Probar conexión')),
+              if (state == TncConnectionState.connected)
+                FilledButton.tonalIcon(key: const Key('disconnectTncButton'),
+                  onPressed: controller.disconnect, icon: const Icon(Icons.link_off),
+                  label: const Text('Desconectar')),
+              if (controller.device != null)
+                TextButton.icon(key: const Key('forgetTncButton'),
+                  onPressed: busy ? null : controller.forget,
+                  icon: const Icon(Icons.delete_outline), label: const Text('Olvidar TNC')),
+            ]),
+            const SizedBox(height: 20),
             const Divider(),
             const SizedBox(height: 10),
-            Text('Diagnóstico KISS', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 10),
-            _ValueRow(label: 'RX bytes', value: '${controller.rxBytes}'),
-            const SizedBox(height: 6),
-            _ValueRow(label: 'RX frames', value: '${controller.rxKissFrames}'),
-            const SizedBox(height: 6),
-            _ValueRow(label: 'TX frames', value: '${controller.txKissFrames}'),
-            if (controller.kissActivity.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              ...controller.kissActivity.map(
-                (line) => Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: SelectableText(
-                    line,
-                    maxLines: 1,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                ),
-              ),
+            Text('OpenQSP', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 12),
+            _ValueRow(label: 'Estado', value: _openQspStatus),
+            if (capabilities is OpenQspCapabilities) ...[
+              const SizedBox(height: 8),
+              _ValueRow(label: 'Protocolo', value: '${capabilities.protocolVersion}'),
+              const SizedBox(height: 8),
+              _ValueRow(label: 'Capabilities', value: '0x${capabilities.capabilities.toRadixString(16).toUpperCase().padLeft(8, '0')}'),
             ],
             const SizedBox(height: 14),
-            Text(
-              'Diagnóstico AX.25',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 10),
-            _ValueRow(
-              label: 'RX AX.25 frames',
-              value: '${controller.rxAx25Frames}',
-            ),
-            const SizedBox(height: 6),
-            _ValueRow(
-              label: 'Errores AX.25',
-              value: '${controller.ax25DecodeErrors}',
-            ),
-            if (controller.ax25Activity.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              ...controller.ax25Activity.map(
-                (line) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: SelectableText(
-                    line,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 14),
-            Text(
-              'Diagnóstico APRS',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 10),
-            _ValueRow(label: 'RX APRS', value: '${controller.rxAprsPackets}'),
-            const SizedBox(height: 6),
-            _ValueRow(label: 'Mensajes', value: '${controller.aprsMessages}'),
-            const SizedBox(height: 6),
-            _ValueRow(label: 'ACKs', value: '${controller.aprsAcks}'),
-            const SizedBox(height: 6),
-            _ValueRow(label: 'REJs', value: '${controller.aprsRejects}'),
-            const SizedBox(height: 6),
-            _ValueRow(
-              label: 'Errores APRS',
-              value: '${controller.aprsParseErrors}',
-            ),
-            const SizedBox(height: 6),
-            _ValueRow(
-              label: 'OQSP RX',
-              value: '${controller.openQspRxPackets}',
-            ),
-            if (controller.aprsActivity.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              ...controller.aprsActivity.map(
-                (line) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: SelectableText(
-                    line,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 18),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                if (state != TncConnectionState.connected)
-                  OutlinedButton.icon(
-                    key: const Key('selectTncButton'),
-                    onPressed: busy ? null : _selectDevice,
-                    icon: const Icon(Icons.bluetooth_searching),
-                    label: const Text('Seleccionar TNC'),
-                  ),
-                if (controller.device != null &&
-                    state != TncConnectionState.connected)
-                  FilledButton.icon(
-                    key: const Key('testTncButton'),
-                    onPressed: busy ? null : controller.connect,
-                    icon: state == TncConnectionState.connecting
-                        ? const SizedBox.square(
-                            dimension: 16,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.cable),
-                    label: const Text('Probar conexión'),
-                  ),
-                if (state == TncConnectionState.connected)
-                  FilledButton.tonalIcon(
-                    key: const Key('disconnectTncButton'),
-                    onPressed: controller.disconnect,
-                    icon: const Icon(Icons.link_off),
-                    label: const Text('Desconectar'),
-                  ),
-                if (controller.device != null)
-                  TextButton.icon(
-                    key: const Key('forgetTncButton'),
-                    onPressed: busy ? null : controller.forget,
-                    icon: const Icon(Icons.delete_outline),
-                    label: const Text('Olvidar TNC'),
-                  ),
-              ],
+            FilledButton.icon(
+              key: const Key('checkOpenQspButton'),
+              onPressed: controller.kissReady && controller.openQspCheckState != OpenQspCheckState.waiting
+                  ? controller.checkOpenQsp : null,
+              icon: const Icon(Icons.cell_tower),
+              label: const Text('Comprobar OpenQSP'),
             ),
           ],
         ),
