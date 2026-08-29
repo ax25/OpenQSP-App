@@ -154,28 +154,32 @@ void _injectObject(
   const ax25Encoder = Ax25Encoder();
   const kissEncoder = KissEncoder();
   final core = codec.encode(object, unsolicited: unsolicited);
-  final fragment = fragmentFrame(core, transactionId).single;
-  final information = messageEncoder.encode(
-    addressee: 'EA3GNU',
-    body: fragment.body,
-    messageId: '00',
-  );
-  final ax25 = ax25Encoder.encodeUi(
-    destination: const Ax25Address(
-      callsign: 'APOQSP',
-      ssid: 0,
-      hasBeenRepeated: false,
-      isLast: false,
-    ),
-    source: const Ax25Address(
-      callsign: 'OQSP',
-      ssid: 0,
-      hasBeenRepeated: false,
-      isLast: true,
-    ),
-    information: information,
-  );
-  service.bytes.add(
-    kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
-  );
+  final fragments = fragmentFrame(core, transactionId);
+
+  for (var index = 0; index < fragments.length; index++) {
+    final fragment = fragments[index];
+    final information = messageEncoder.encode(
+      addressee: 'EA3GNU',
+      body: fragment.body,
+      messageId: index.toRadixString(36).toUpperCase().padLeft(2, '0'),
+    );
+    final ax25 = ax25Encoder.encodeUi(
+      destination: const Ax25Address(
+        callsign: 'APOQSP',
+        ssid: 0,
+        hasBeenRepeated: false,
+        isLast: false,
+      ),
+      source: const Ax25Address(
+        callsign: 'OQSP',
+        ssid: 0,
+        hasBeenRepeated: false,
+        isLast: true,
+      ),
+      information: information,
+    );
+    service.bytes.add(
+      kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
+    );
+  }
 }
