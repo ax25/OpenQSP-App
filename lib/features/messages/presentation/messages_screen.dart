@@ -46,15 +46,26 @@ class _MessagesScreenState extends State<MessagesScreen> {
           decoration: const InputDecoration(labelText: 'Destination callsign'),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, input.text), child: const Text('Open')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, input.text),
+            child: const Text('Open'),
+          ),
         ],
       ),
     );
     final normalized = remote?.trim().toUpperCase() ?? '';
     if (!mounted || normalized.isEmpty) return;
-    if (!RegExp(r'^[A-Z0-9]{1,6}(?:-[0-9]{1,2})?$').hasMatch(normalized) || normalized == widget.controller.callsign.toUpperCase()) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Enter a valid callsign different from your own')));
+    if (!RegExp(r'^[A-Z0-9]{1,6}(?:-[0-9]{1,2})?$').hasMatch(normalized) ||
+        normalized == widget.controller.callsign.toUpperCase()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Enter a valid callsign different from your own'),
+        ),
+      );
       return;
     }
     await _open(normalized);
@@ -63,7 +74,12 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Future<void> _open(String remote) async {
     await Navigator.push<void>(
       context,
-      MaterialPageRoute(builder: (_) => ConversationScreen(controller: widget.controller, remoteCallsign: remote)),
+      MaterialPageRoute(
+        builder: (_) => ConversationScreen(
+          controller: widget.controller,
+          remoteCallsign: remote,
+        ),
+      ),
     );
     widget.controller.closeConversation();
   }
@@ -72,7 +88,17 @@ class _MessagesScreenState extends State<MessagesScreen> {
   Widget build(BuildContext context) {
     final controller = widget.controller;
     return Scaffold(
-      appBar: AppBar(title: const Text('Messages')),
+      appBar: AppBar(
+        title: const Text('Messages'),
+        actions: [
+          IconButton(
+            key: const Key('getNewMessages'),
+            onPressed: controller.reconcile,
+            tooltip: 'Get new messages',
+            icon: const Icon(Icons.sync),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         key: const Key('newConversation'),
         onPressed: _newConversation,
@@ -111,11 +137,17 @@ class _MessagesScreenState extends State<MessagesScreen> {
     }
     if (controller.error != null && controller.conversations.isEmpty) {
       return Center(
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('Unable to load conversations'),
-          const SizedBox(height: 12),
-          OutlinedButton(onPressed: controller.loadConversations, child: const Text('Retry')),
-        ]),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Unable to load conversations'),
+            const SizedBox(height: 12),
+            OutlinedButton(
+              onPressed: controller.loadConversations,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
       );
     }
     if (controller.conversations.isEmpty) {
