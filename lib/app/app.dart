@@ -10,7 +10,6 @@ import '../features/aprs/application/aprs_session_controller.dart';
 import '../features/aprs/application/tnc_settings_controller.dart';
 import '../features/aprs/data/bluetooth_tnc_service.dart';
 import '../features/aprs/data/bluetooth_tnc_storage.dart';
-import '../features/aprs/presentation/aprs_console.dart';
 import '../features/callsign/data/callsign_store.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/messages/data/messages_transport.dart';
@@ -118,35 +117,6 @@ class _OpenQspAppState extends State<OpenQspApp> {
       navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       theme: OpenQspTheme.light,
-      builder: (context, child) {
-        final controller = _tncController;
-        final session = _aprsSession;
-        if (_loading || controller == null || session == null || child == null) {
-          return child ?? const SizedBox.shrink();
-        }
-        return AnimatedBuilder(
-          animation: session,
-          child: child,
-          builder: (context, appChild) {
-            if (!session.active) return appChild!;
-            return LayoutBuilder(
-              builder: (context, constraints) => Stack(
-                fit: StackFit.expand,
-                children: [
-                  appChild!,
-                  Positioned(
-                    left: 0,
-                    right: 0,
-                    bottom: 0,
-                    height: constraints.maxHeight * 0.25,
-                    child: AprsConsole(controller: controller),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
       home: _loading
           ? const Scaffold(body: SizedBox.shrink())
           : _callsign == null
