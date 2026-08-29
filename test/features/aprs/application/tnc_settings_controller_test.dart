@@ -211,6 +211,38 @@ void main() {
     expect(controller.failure, TncFailure.permissionDenied);
   });
 
+  test('only KISS port-zero data frames are decoded as AX.25', () async {
+    final ax25 = [
+      ...'APN382'.codeUnits.map((value) => value << 1),
+      0x60,
+      ...'EA3GNU'.codeUnits.map((value) => value << 1),
+      0x61,
+      0x03,
+      0xf0,
+      0x41,
+    ];
+    service.bytes.add([0xc0, 0x00, ...ax25, 0xc0]);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(controller.rxKissFrames, 1);
+    expect(controller.rxAx25Frames, 1);
+    expect(controller.ax25DecodeErrors, 0);
+    expect(controller.ax25Activity.single, contains('SRC: EA3GNU'));
+
+    service.bytes.add([0xc0, 0x01, 1, 2, 3, 0xc0]);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.rxKissFrames, 2);
+    expect(controller.rxAx25Frames, 1);
+    expect(controller.ax25DecodeErrors, 0);
+  });
+
+  test('bad AX.25 data is counted and later frames continue', () async {
+    service.bytes.add([0xc0, 0x00, 1, 2, 3, 0xc0]);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.ax25DecodeErrors, 1);
+    expect(controller.state, isNot(TncConnectionState.error));
+  });
+
   test('dispose closes an active connection without later notifications', () async {
     storage.value = device;
     await controller.initialize();
