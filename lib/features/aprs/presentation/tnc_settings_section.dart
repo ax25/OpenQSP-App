@@ -159,6 +159,43 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                 ),
               ),
             ],
+            const SizedBox(height: 14),
+            Text(
+              'Diagnóstico APRS',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 10),
+            _ValueRow(label: 'RX APRS', value: '${controller.rxAprsPackets}'),
+            const SizedBox(height: 6),
+            _ValueRow(label: 'Mensajes', value: '${controller.aprsMessages}'),
+            const SizedBox(height: 6),
+            _ValueRow(label: 'ACKs', value: '${controller.aprsAcks}'),
+            const SizedBox(height: 6),
+            _ValueRow(label: 'REJs', value: '${controller.aprsRejects}'),
+            const SizedBox(height: 6),
+            _ValueRow(
+              label: 'Errores APRS',
+              value: '${controller.aprsParseErrors}',
+            ),
+            const SizedBox(height: 6),
+            _ValueRow(
+              label: 'OQSP RX',
+              value: '${controller.openQspRxPackets}',
+            ),
+            if (controller.aprsActivity.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              ...controller.aprsActivity.map(
+                (line) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: SelectableText(
+                    line,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                    ),
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 18),
             Wrap(
               spacing: 10,
