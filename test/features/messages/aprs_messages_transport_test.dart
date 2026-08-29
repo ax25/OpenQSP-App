@@ -1,0 +1,177 @@
+import 'dart:async';
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_codec.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_models.dart';
+import 'package:openqsp_app/features/aprs/aprs/aprs_message_encoder.dart';
+import 'package:openqsp_app/features/aprs/application/aprs_session_controller.dart';
+import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
+import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
+import 'package:openqsp_app/features/aprs/ax25/ax25_encoder.dart';
+import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_service.dart';
+import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_storage.dart';
+import 'package:openqsp_app/features/aprs/domain/tnc_device.dart';
+import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
+import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
+import 'package:openqsp_app/features/aprs/openqsp_carriage/openqsp_aprs_carriage.dart';
+import 'package:openqsp_app/features/messages/data/aprs_messages_transport.dart';
+import 'package:openqsp_app/features/messages/domain/message_models.dart';
+
+class _MemoryStorage implements BluetoothTncStorage {
+  _MemoryStorage(this.value);
+  TncDevice? value;
+
+  @override
+  Future<void> clear() async => value = null;
+
+  @override
+  Future<TncDevice?> read() async => value;
+
+  @override
+  Future<void> write(TncDevice device) async => value = device;
+}
+
+class _FakeTncService implements BluetoothTncService {
+  final bytes = StreamController<List<int>>.broadcast();
+  final losses = StreamController<int>.broadcast();
+  final List<List<int>> sentBytes = [];
+  int? _activeConnectionId;
+
+  @override
+  int? get activeConnectionId => _activeConnectionId;
+
+  @override
+  Stream<List<int>> get incomingBytes => bytes.stream;
+
+  @override
+  Stream<int> get unexpectedDisconnections => losses.stream;
+
+  @override
+  Future<List<TncDevice>> bondedDevices() async => const [];
+
+  @override
+  Future<void> connect(TncDevice device) async => _activeConnectionId = 1;
+
+  @override
+  Future<void> disconnect() async => _activeConnectionId = null;
+
+  @override
+  Future<void> sendBytes(List<int> data) async => sentBytes.add(List.of(data));
+}
+
+void main() {
+  const device = TncDevice(id: '00:11:22:33:44:55', name: 'TNC');
+  late _FakeTncService service;
+  late TncSettingsController tnc;
+  late AprsSessionController session;
+  late AprsMessagesTransport transport;
+
+  setUp(() async {
+    service = _FakeTncService();
+    tnc = TncSettingsController(
+      storage: _MemoryStorage(device),
+      service: service,
+      sourceCallsign: 'EA3GNU',
+    );
+    await tnc.initialize();
+    await tnc.connect();
+    tnc.openQspCheckState = OpenQspCheckState.available;
+    session = AprsSessionController(tncController: tnc);
+    await session.activate();
+    // activate() starts a capabilities probe; tests only need the operational
+    // state and inject their own logical responses below.
+    tnc.openQspCheckState = OpenQspCheckState.available;
+    transport = AprsMessagesTransport(
+      session: session,
+      callsign: 'EA3GNU',
+      responseTimeout: const Duration(seconds: 1),
+      transactionIdFactory: () => 'ABC',
+    );
+    await transport.connect(callsign: 'EA3GNU', token: '');
+    service.sentBytes.clear();
+  });
+
+  tearDown(() async {
+    await transport.close();
+    session.dispose();
+    tnc.dispose();
+    await service.bytes.close();
+    await service.losses.close();
+  });
+
+  test('send waits for STORED and writes an OpenQSP APRS request', () async {
+    final pending = transport.send(
+      callsign: 'EA3GNU',
+      remoteCallsign: 'EA3ABC',
+      text: 'hola por radio',
+      token: '',
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.sentBytes, isNotEmpty);
+    _injectObject(service, const OpenQspStored(), transactionId: '001');
+
+    final message = await pending;
+    expect(message.from, 'EA3GNU');
+    expect(message.to, 'EA3ABC');
+    expect(message.body, 'hola por radio');
+    expect(message.deliveryStatus, MessageDeliveryStatus.stored);
+  });
+
+  test('unsolicited MESSAGE becomes a realtime received event', () async {
+    final event = transport.events.whereType<MessageReceived>().first;
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 7,
+        createdAt: 1700000000,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'mensaje recibido',
+      ),
+      transactionId: '002',
+      unsolicited: true,
+    );
+
+    final received = await event;
+    expect(received.message.from, 'EA3ABC');
+    expect(received.message.to, 'EA3GNU');
+    expect(received.message.body, 'mensaje recibido');
+  });
+}
+
+void _injectObject(
+  _FakeTncService service,
+  OpenQspFrameObject object, {
+  required String transactionId,
+  bool unsolicited = false,
+}) {
+  const codec = OpenQspCodec();
+  const messageEncoder = AprsMessageEncoder();
+  const ax25Encoder = Ax25Encoder();
+  const kissEncoder = KissEncoder();
+  final core = codec.encode(object, unsolicited: unsolicited);
+  final fragment = fragmentFrame(core, transactionId).single;
+  final information = messageEncoder.encode(
+    addressee: 'EA3GNU',
+    body: '${fragment.body}{00',
+  );
+  final ax25 = ax25Encoder.encodeUi(
+    destination: const Ax25Address(
+      callsign: 'APOQSP',
+      ssid: 0,
+      hasBeenRepeated: false,
+      isLast: false,
+    ),
+    source: const Ax25Address(
+      callsign: 'OQSP',
+      ssid: 0,
+      hasBeenRepeated: false,
+      isLast: true,
+    ),
+    information: information,
+  );
+  service.bytes.add(
+    kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
+  );
+}
