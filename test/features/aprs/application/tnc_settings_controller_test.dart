@@ -311,6 +311,18 @@ void main() {
     );
   }
 
+  Future<AprsPacket> sentAprs(List<int> bytes) async {
+    final kiss = KissDecoder();
+    final frameFuture = kiss.frames.first;
+    kiss.add(bytes);
+    final frame = await frameFuture;
+    final packet = const AprsParser().parse(
+      const Ax25Decoder().decode(frame.payload),
+    )!;
+    await kiss.close();
+    return packet;
+  }
+
   test('CAPABILITIES response from OQSP to the local APRS identity is decoded',
       () async {
     storage.value = device;
@@ -326,6 +338,77 @@ void main() {
     expect(object.protocolVersion, 1);
     expect(object.capabilities, 0x0000000f);
     expect(controller.openQspCheckState, OpenQspCheckState.available);
+  });
+
+  test('acknowledges every server retry and decodes CAPABILITIES only once',
+      () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+    await controller.checkOpenQsp();
+    final reply = response(
+      source: 'OQSP',
+      body: 'Q1:ACK:00/01:AUYABQEAAAAP{0A',
+    );
+
+    service.bytes.add(reply);
+    await Future<void>.delayed(Duration.zero);
+    service.bytes.add(reply);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(service.sentBytes, hasLength(3)); // probe plus two APRS ACKs
+    for (final bytes in service.sentBytes.skip(1)) {
+      final ack = await sentAprs(bytes) as AprsAck;
+      expect(ack.addressee, 'OQSP');
+      expect(ack.messageId, '0A');
+    }
+    final object = controller.lastOpenQspObject as OpenQspCapabilities;
+    expect(object.protocolVersion, 1);
+    expect(object.capabilities, 0x0000000f);
+    expect(controller.openQspFramesRx, 1);
+    expect(controller.openQspErrors, 0);
+  });
+
+  test('reassembles out-of-order Q1 fragments through the integrated RX path',
+      () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+    await controller.checkOpenQsp();
+
+    service.bytes.add(response(source: 'OQSP', body: 'Q1:MUL:01/02:EAAAAP'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.lastOpenQspObject, isNull);
+    service.bytes.add(response(source: 'OQSP', body: 'Q1:MUL:00/02:AUYABQ'));
+    await Future<void>.delayed(Duration.zero);
+
+    final object = controller.lastOpenQspObject as OpenQspCapabilities;
+    expect(object.protocolVersion, 1);
+    expect(object.capabilities, 0x0000000f);
+    expect(controller.openQspFramesRx, 1);
+  });
+
+  test('invalid OpenQSP bodies are isolated and valid RX continues', () async {
+    storage.value = device;
+    await controller.initialize();
+    await controller.setAprsSsid(5);
+    await controller.connect();
+    await controller.checkOpenQsp();
+
+    service.bytes.add(response(source: 'OQSP', body: 'not Q1'));
+    await Future<void>.delayed(Duration.zero);
+    service.bytes.add(response(source: 'OQSP', body: 'Q1:bad'));
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.openQspErrors, 2);
+
+    service.bytes.add(
+      response(source: 'OQSP', body: 'Q1:NEW:00/01:AUYABQEAAAAP'),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.lastOpenQspObject, isA<OpenQspCapabilities>());
+    expect(controller.openQspFramesRx, 1);
   });
 
   test('valid Q1 from another station cannot satisfy the capability check',

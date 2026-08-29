@@ -90,6 +90,7 @@ class TncSettingsController extends ChangeNotifier {
   int aprsSsid = 0;
   Timer? _openQspTimer;
   final OpenQspAprsReassembler _reassembler = OpenQspAprsReassembler();
+  final Map<String, DateTime> _completedOpenQspTransactions = {};
   static const OpenQspCodec _openQspCodec = OpenQspCodec();
   static const Ax25Encoder _ax25Encoder = Ax25Encoder();
   static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
@@ -136,6 +137,9 @@ class TncSettingsController extends ChangeNotifier {
         aprsMessages++;
         if (_isOpenQspResponse(packet)) {
           openQspRxPackets++;
+          if (packet.messageId case final messageId?) {
+            unawaited(_sendAprsAck(messageId));
+          }
           _decodeOpenQsp(packet);
         }
         break;
@@ -155,6 +159,35 @@ class TncSettingsController extends ChangeNotifier {
     if (kDebugMode) debugPrint(_aprsLog(packet));
   }
 
+  Future<void> _sendAprsAck(String messageId) async {
+    try {
+      final call = sourceCallsign;
+      if (call == null || !kissReady) return;
+      final information = _messageEncoder.encode(
+        addressee: openQspAprsAddressee,
+        body: 'ack$messageId',
+      );
+      final ax25 = _ax25Encoder.encodeUi(
+        destination: const Ax25Address(
+          callsign: openQspAprsTocall,
+          ssid: 0,
+          hasBeenRepeated: false,
+          isLast: false,
+        ),
+        source: Ax25Address(
+          callsign: call,
+          ssid: aprsSsid,
+          hasBeenRepeated: false,
+          isLast: true,
+        ),
+        information: information,
+      );
+      await sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
+    } on Object catch (error) {
+      if (kDebugMode) debugPrint('APRS ACK TX error: $error');
+    }
+  }
+
   bool _isOpenQspResponse(AprsTextMessage message) {
     final call = sourceCallsign;
     if (call == null || message.frame.source.callsign != openQspAprsAddressee) {
@@ -170,16 +203,24 @@ class TncSettingsController extends ChangeNotifier {
       // accidentally appending that suffix for a second time.
       final fragment = parseFragment(message.text);
       openQspFragmentsRx++;
+      final now = DateTime.now().toUtc();
+      _completedOpenQspTransactions.removeWhere(
+        (_, completedAt) => now.difference(completedAt) >= openQspAprsDefaultTtl,
+      );
+      final transactionKey =
+          '${message.frame.source}|${fragment.transactionId}';
+      if (_completedOpenQspTransactions.containsKey(transactionKey)) return;
       final bytes = _reassembler.add(
         peer: message.frame.source.toString(),
         fragment: fragment,
-        now: DateTime.now().toUtc(),
+        now: now,
       );
       if (bytes == null) return;
       final decoded = _openQspCodec.decode(bytes);
       openQspFramesRx++;
       lastOpenQspObject = decoded.object;
-      lastValidOpenQspRx = DateTime.now().toUtc();
+      lastValidOpenQspRx = now;
+      _completedOpenQspTransactions[transactionKey] = now;
       if (decoded.object is OpenQspCapabilities &&
           openQspCheckState == OpenQspCheckState.waiting) {
         _openQspTimer?.cancel();
