@@ -73,12 +73,13 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
       preferences.getString(_cursorsKey(normalizedCallsign)),
     );
     final storedCursor = cursors[transport];
-    if (storedCursor != null || transport != 'aprs') return storedCursor;
+    if (transport != 'aprs') return storedCursor;
 
-    // Older clients could persist complete canonical messages without ever
-    // persisting an APRS sync cursor. Recover only the largest contiguous
-    // mailbox prefix (1..N). Never use the highest visible sequence directly:
-    // a gap means the missing message must still be requested over APRS.
+    // APRS cursors can lag behind complete canonical messages that were
+    // persisted before the cursor write completed. Recover the largest
+    // contiguous mailbox prefix (1..N) and use whichever safe point is newer.
+    // Never use the highest visible sequence directly: a gap means the missing
+    // message must still be requested over APRS.
     final storedMessages = _decodeMessages(
       preferences.getString(_messagesKey(normalizedCallsign)),
     );
@@ -95,7 +96,15 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
     while (sequences.contains(contiguous + 1)) {
       contiguous++;
     }
-    return contiguous == 0 ? null : '$contiguous';
+
+    if (storedCursor == null) {
+      return contiguous == 0 ? null : '$contiguous';
+    }
+    final persisted = int.tryParse(storedCursor);
+    if (persisted == null || persisted < 0 || persisted > 0xffffffff) {
+      return storedCursor;
+    }
+    return '${persisted > contiguous ? persisted : contiguous}';
   }
 
   @override

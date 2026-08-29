@@ -31,6 +31,40 @@ void main() {
 
     expect(await store.cursor('EA3GNU', 'aprs'), isNull);
   });
+
+  test('APRS cursor advances beyond a stale persisted cursor', () async {
+    final store = PreferencesLocalMessagesStore();
+    await store.setCursor('EA3GNU', 'aprs', '5');
+    await store.upsertAll(
+      'EA3GNU',
+      List.generate(10, (index) => _message(index + 1)),
+    );
+
+    expect(await store.cursor('EA3GNU', 'aprs'), '10');
+  });
+
+  test('APRS cursor advances only through the contiguous local prefix', () async {
+    final store = PreferencesLocalMessagesStore();
+    await store.setCursor('EA3GNU', 'aprs', '5');
+    await store.upsertAll('EA3GNU', [
+      ...List.generate(7, (index) => _message(index + 1)),
+      _message(9),
+      _message(10),
+    ]);
+
+    expect(await store.cursor('EA3GNU', 'aprs'), '7');
+  });
+
+  test('APRS cursor never regresses behind a newer persisted cursor', () async {
+    final store = PreferencesLocalMessagesStore();
+    await store.setCursor('EA3GNU', 'aprs', '15');
+    await store.upsertAll(
+      'EA3GNU',
+      List.generate(10, (index) => _message(index + 1)),
+    );
+
+    expect(await store.cursor('EA3GNU', 'aprs'), '15');
+  });
 }
 
 InternetMessage _message(int sequence) => InternetMessage(
