@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/core/openqsp_protocol/openqsp_codec.dart';
 import 'package:openqsp_app/core/openqsp_protocol/openqsp_models.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_operation.dart';
 import 'package:openqsp_app/features/aprs/aprs/aprs_message_encoder.dart';
 import 'package:openqsp_app/features/aprs/application/aprs_session_controller.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
@@ -140,6 +141,39 @@ void main() {
     expect(received.message.from, 'EA3ABC');
     expect(received.message.to, 'EA3GNU');
     expect(received.message.body, 'mensaje recibido');
+  });
+
+  test('sync collects GET_NEW_MESSAGES page until END', () async {
+    final pending = transport.sync(token: '', cursor: '6');
+    await Future<void>.delayed(Duration.zero);
+    expect(service.sentBytes, isNotEmpty);
+
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 7,
+        createdAt: 1700000000,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: 'new seven',
+      ),
+      transactionId: '010',
+    );
+    _injectObject(
+      service,
+      const OpenQspEnd(
+        requestOperation: OpenQspOperation.getNewMessages,
+        returnedCount: 1,
+        nextSince: 7,
+        hasMore: false,
+      ),
+      transactionId: '011',
+    );
+
+    final batch = await pending;
+    expect(batch.cursor, '7');
+    expect(batch.hasMore, isFalse);
+    expect(batch.messages.single.body, 'new seven');
   });
 }
 
