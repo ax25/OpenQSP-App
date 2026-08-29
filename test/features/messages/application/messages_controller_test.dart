@@ -167,6 +167,34 @@ void main() {
 
     expect(repository.syncCalls, 2);
   });
+
+  test('progressive APRS cursor is stored after each durable message', () async {
+    repository.cursorKey = 'aprs';
+    await controller.start();
+    localStore.operations.clear();
+
+    realtime.emit(
+      MessageReceived(
+        message('1', from: 'N0CALL', to: 'EA3GNU', day: 1),
+        syncCursor: '1',
+      ),
+    );
+    realtime.emit(
+      MessageReceived(
+        message('2', from: 'N0CALL', to: 'EA3GNU', day: 2),
+        syncCursor: '2',
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(localStore.cursors['aprs'], '2');
+    expect(localStore.operations, [
+      'message:1',
+      'cursor:aprs:1',
+      'message:2',
+      'cursor:aprs:2',
+    ]);
+  });
 }
 
 InternetMessage message(
@@ -187,13 +215,16 @@ InternetMessage message(
 class MemoryLocalStore implements LocalMessagesStore {
   final items = <InternetMessage>[];
   final cursors = <String, String>{};
+  final operations = <String>[];
 
   @override
   Future<List<InternetMessage>> messages(String callsign) async => List.of(items);
 
   @override
-  Future<void> upsert(String callsign, InternetMessage message) async =>
-      upsertAll(callsign, [message]);
+  Future<void> upsert(String callsign, InternetMessage message) async {
+    operations.add('message:${message.id}');
+    await upsertAll(callsign, [message]);
+  }
 
   @override
   Future<void> upsertAll(
@@ -220,7 +251,10 @@ class MemoryLocalStore implements LocalMessagesStore {
     String callsign,
     String transport,
     String value,
-  ) async => cursors[transport] = value;
+  ) async {
+    operations.add('cursor:$transport:$value');
+    cursors[transport] = value;
+  }
 }
 
 class FakeRepository
@@ -231,9 +265,10 @@ class FakeRepository
   String? lastSyncCursor;
   InternetMessage? sent;
   int syncCalls = 0;
+  String cursorKey = 'internet';
 
   @override
-  String get syncCursorKey => 'internet';
+  String get syncCursorKey => cursorKey;
 
   @override
   Future<List<InternetMessage>> messages({
