@@ -7,7 +7,7 @@ import 'package:openqsp_app/features/messages/domain/message_models.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 void main() {
-  test('uses WSS query token and parses only message.created', () async {
+  test('uses WSS query token and parses message lifecycle events', () async {
     final channel = FakeChannel();
     Uri? connectedUri;
     final client = InternetMessagesRealtimeClient(
@@ -17,24 +17,54 @@ void main() {
         return channel;
       },
     );
-    final event = client.events.first;
+    final events = <MessagingEvent>[];
+    final subscription = client.events.listen(events.add);
     await client.connect(callsign: 'EA3GNU', token: 'secret token');
     expect(connectedUri?.scheme, 'wss');
     expect(connectedUri?.path, '/api/v1/ws');
     expect(connectedUri?.queryParameters['token'], 'secret token');
+
     channel.add(
       jsonEncode({
         'type': 'message.created',
         'data': {
           'id': 'server-id',
-          'from': 'N0CALL',
-          'to': 'EA3GNU',
+          'from': 'EA3GNU',
+          'to': 'N0CALL',
           'body': 'Hello',
           'created_at': '2026-08-28T12:00:00Z',
+          'delivery_status': 'stored',
+          'delivered_at': null,
         },
       }),
     );
-    expect((await event as MessageReceived).message.id, 'server-id');
+    channel.add(
+      jsonEncode({
+        'type': 'message.delivered',
+        'data': {
+          'id': 'server-id',
+          'delivered_at': '2026-08-28T12:00:02Z',
+        },
+      }),
+    );
+    channel.add(
+      jsonEncode({
+        'type': 'message.read',
+        'data': {
+          'peer': 'N0CALL',
+          'last_read_message_id': 'server-id',
+        },
+      }),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(events, hasLength(3));
+    expect((events[0] as MessageReceived).message.deliveryStatus,
+        MessageDeliveryStatus.stored);
+    expect((events[1] as MessageDelivered).messageId, 'server-id');
+    expect((events[2] as MessageRead).lastReadMessageId, 'server-id');
+
+    await subscription.cancel();
     await client.close();
   });
 

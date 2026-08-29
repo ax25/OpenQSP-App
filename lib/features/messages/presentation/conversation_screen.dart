@@ -72,8 +72,6 @@ class _ConversationScreenState extends State<ConversationScreen> {
   Widget build(BuildContext context) {
     final messages = widget.controller.historyFor(widget.remoteCallsign);
     return Scaffold(
-      // The server contract currently exposes no delete operation. Do not show
-      // destructive controls until that capability exists server-side.
       appBar: AppBar(title: Text(widget.remoteCallsign)),
       body: Column(children: [
         if (_error != null)
@@ -148,10 +146,19 @@ class _ConversationScreenState extends State<ConversationScreen> {
                         const SizedBox(width: 4),
                         Padding(
                           padding: const EdgeInsets.only(bottom: 6),
-                          child: Text(
-                            formatMessageTime(message.createdAt),
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(color: colors.onSurfaceVariant),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                formatMessageTime(message.createdAt),
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(color: colors.onSurfaceVariant),
+                              ),
+                              if (sent) ...[
+                                const SizedBox(width: 3),
+                                _MessageStatusIcon(message: message),
+                              ],
+                            ],
                           ),
                         ),
                       ],
@@ -194,6 +201,33 @@ class _ConversationScreenState extends State<ConversationScreen> {
           ),
         ),
       ]),
+    );
+  }
+}
+
+class _MessageStatusIcon extends StatelessWidget {
+  const _MessageStatusIcon({required this.message});
+
+  final InternetMessage message;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = switch (message.deliveryStatus) {
+      MessageDeliveryStatus.stored => ('Stored on server', Colors.grey),
+      MessageDeliveryStatus.delivered => ('Delivered to recipient', Colors.green),
+      MessageDeliveryStatus.read => ('Read by recipient', Colors.blue),
+    };
+    return Tooltip(
+      message: label,
+      child: Semantics(
+        label: label,
+        child: Icon(
+          Icons.check,
+          key: Key('status-${message.id}'),
+          size: 16,
+          color: color,
+        ),
+      ),
     );
   }
 }

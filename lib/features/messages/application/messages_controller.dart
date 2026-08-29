@@ -115,6 +115,10 @@ class MessagesController extends ChangeNotifier {
       withCallsign: normalized,
     );
     _mergeAll(loaded);
+    await repository.markConversationRead(
+      remoteCallsign: normalized,
+      token: token,
+    );
     _unreadByPeer[normalized] = 0;
     _rebuildConversations();
     notifyListeners();
@@ -148,26 +152,84 @@ class MessagesController extends ChangeNotifier {
         final isNew = !_messagesById.containsKey(message.id);
         final peer = _key(message.peerFor(callsign));
         if (isNew &&
-            message.directionFor(callsign) == MessageDirection.received &&
-            openRemoteCallsign != peer) {
-          _unreadByPeer[peer] = (_unreadByPeer[peer] ?? 0) + 1;
+            message.directionFor(callsign) == MessageDirection.received) {
+          if (openRemoteCallsign == peer) {
+            unawaited(_markOpenConversationRead(peer));
+          } else {
+            _unreadByPeer[peer] = (_unreadByPeer[peer] ?? 0) + 1;
+          }
         }
         _merge(message);
+      case MessageDelivered(:final messageId, :final deliveredAt):
+        final current = _messagesById[messageId];
+        if (current != null &&
+            current.deliveryStatus != MessageDeliveryStatus.read) {
+          _messagesById[messageId] = current.copyWith(
+            deliveryStatus: MessageDeliveryStatus.delivered,
+            deliveredAt: deliveredAt,
+          );
+          _rebuildConversations();
+        }
+      case MessageRead(:final peer, :final lastReadMessageId):
+        _applyReadCursor(_key(peer), lastReadMessageId);
     }
     notifyListeners();
   }
 
+  Future<void> _markOpenConversationRead(String peer) async {
+    try {
+      await repository.markConversationRead(remoteCallsign: peer, token: token);
+      _unreadByPeer[peer] = 0;
+      _rebuildConversations();
+      notifyListeners();
+    } on Object {
+      // Reconciliation or a later open will retry the durable read update.
+    }
+  }
+
+  void _applyReadCursor(String peer, String lastReadMessageId) {
+    final history = historyFor(peer);
+    final target = history.indexWhere((message) => message.id == lastReadMessageId);
+    if (target < 0) {
+      unawaited(reconcile());
+      return;
+    }
+    for (var index = 0; index <= target; index++) {
+      final message = history[index];
+      if (message.directionFor(callsign) != MessageDirection.sent) continue;
+      _messagesById[message.id] = message.copyWith(
+        deliveryStatus: MessageDeliveryStatus.read,
+      );
+    }
+    _rebuildConversations();
+  }
+
   void _mergeAll(Iterable<InternetMessage> messages) {
     for (final message in messages) {
-      _messagesById[message.id] = message;
+      _mergeOne(message);
     }
     _rebuildConversations();
   }
 
   void _merge(InternetMessage message) {
-    _messagesById[message.id] = message;
+    _mergeOne(message);
     _rebuildConversations();
   }
+
+  void _mergeOne(InternetMessage message) {
+    final existing = _messagesById[message.id];
+    if (existing == null ||
+        _statusRank(message.deliveryStatus) >=
+            _statusRank(existing.deliveryStatus)) {
+      _messagesById[message.id] = message;
+    }
+  }
+
+  int _statusRank(MessageDeliveryStatus status) => switch (status) {
+    MessageDeliveryStatus.stored => 0,
+    MessageDeliveryStatus.delivered => 1,
+    MessageDeliveryStatus.read => 2,
+  };
 
   void _rebuildConversations() {
     final latestByPeer = <String, InternetMessage>{};

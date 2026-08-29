@@ -22,11 +22,13 @@ class InternetMessagesRepository implements MessagesRepository {
     this.timeout = const Duration(seconds: 8),
     String Function()? idempotencyKeyFactory,
   }) : _messagesUri = baseUri.resolve('/api/v1/messages'),
+       _conversationsUri = baseUri.resolve('/api/v1/conversations/'),
        _syncUri = baseUri.resolve('/api/v1/sync'),
        _httpClient = httpClient ?? http.Client(),
        _idempotencyKeyFactory = idempotencyKeyFactory ?? _newKey;
 
   final Uri _messagesUri;
+  final Uri _conversationsUri;
   final Uri _syncUri;
   final http.Client _httpClient;
   final Duration timeout;
@@ -83,6 +85,19 @@ class InternetMessagesRepository implements MessagesRepository {
       throw const FormatException('Missing message response');
     }
     return InternetMessage.fromJson(message);
+  }
+
+  @override
+  Future<void> markConversationRead({
+    required String remoteCallsign,
+    required String token,
+  }) async {
+    final peer = remoteCallsign.toUpperCase();
+    final uri = _conversationsUri.resolve('$peer/read');
+    final response = await _httpClient
+        .post(uri, headers: _headers(token))
+        .timeout(timeout);
+    _decode(response);
   }
 
   @override

@@ -1,5 +1,7 @@
 enum MessageDirection { sent, received }
 
+enum MessageDeliveryStatus { stored, delivered, read }
+
 const int maximumMessageLength = 208;
 
 class InternetMessage {
@@ -9,6 +11,8 @@ class InternetMessage {
     required this.to,
     required this.body,
     required this.createdAt,
+    this.deliveryStatus = MessageDeliveryStatus.stored,
+    this.deliveredAt,
   });
 
   final String id;
@@ -16,6 +20,8 @@ class InternetMessage {
   final String to;
   final String body;
   final DateTime createdAt;
+  final MessageDeliveryStatus deliveryStatus;
+  final DateTime? deliveredAt;
 
   String peerFor(String localCallsign) =>
       from.toUpperCase() == localCallsign.toUpperCase() ? to : from;
@@ -25,18 +31,35 @@ class InternetMessage {
       ? MessageDirection.sent
       : MessageDirection.received;
 
+  InternetMessage copyWith({
+    MessageDeliveryStatus? deliveryStatus,
+    DateTime? deliveredAt,
+  }) => InternetMessage(
+    id: id,
+    from: from,
+    to: to,
+    body: body,
+    createdAt: createdAt,
+    deliveryStatus: deliveryStatus ?? this.deliveryStatus,
+    deliveredAt: deliveredAt ?? this.deliveredAt,
+  );
+
   factory InternetMessage.fromJson(Map<String, dynamic> json) {
     final id = json['id'];
     final from = json['from'];
     final to = json['to'];
     final body = json['body'];
     final createdAt = json['created_at'];
+    final deliveryStatus = json['delivery_status'];
+    final deliveredAt = json['delivered_at'];
     if (id is! String ||
         id.isEmpty ||
         from is! String ||
         to is! String ||
         body is! String ||
-        createdAt is! String) {
+        createdAt is! String ||
+        (deliveryStatus != null && deliveryStatus is! String) ||
+        (deliveredAt != null && deliveredAt is! String)) {
       throw const FormatException('Invalid message payload');
     }
     return InternetMessage(
@@ -45,8 +68,19 @@ class InternetMessage {
       to: to.toUpperCase(),
       body: body,
       createdAt: DateTime.parse(createdAt).toUtc(),
+      deliveryStatus: _parseDeliveryStatus(deliveryStatus as String?),
+      deliveredAt: deliveredAt == null
+          ? null
+          : DateTime.parse(deliveredAt as String).toUtc(),
     );
   }
+
+  static MessageDeliveryStatus _parseDeliveryStatus(String? value) => switch (value) {
+    null || 'stored' => MessageDeliveryStatus.stored,
+    'delivered' => MessageDeliveryStatus.delivered,
+    'read' => MessageDeliveryStatus.read,
+    _ => throw const FormatException('Invalid message delivery status'),
+  };
 }
 
 class ConversationSummary {
@@ -83,6 +117,18 @@ sealed class MessagingEvent {
 class MessageReceived extends MessagingEvent {
   const MessageReceived(this.message);
   final InternetMessage message;
+}
+
+class MessageDelivered extends MessagingEvent {
+  const MessageDelivered({required this.messageId, required this.deliveredAt});
+  final String messageId;
+  final DateTime deliveredAt;
+}
+
+class MessageRead extends MessagingEvent {
+  const MessageRead({required this.peer, required this.lastReadMessageId});
+  final String peer;
+  final String lastReadMessageId;
 }
 
 enum RealtimeConnectionState {
