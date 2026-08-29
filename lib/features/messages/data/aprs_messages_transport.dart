@@ -134,19 +134,29 @@ final class AprsMessagesTransport
             pending.completer.completeError(StateError(message));
           }
         }
-      case OpenQspMessage():
+      case OpenQspMessage(:final sequence):
         final message = _fromOpenQspMessage(object);
         final pending = _pendingSync;
-        if (pending != null &&
-            pending.messages.every((existing) => existing.id != message.id)) {
-          pending.messages.add(message);
+        String? progressiveCursor;
+        if (pending != null) {
+          if (pending.messages.every((existing) => existing.id != message.id)) {
+            pending.messages.add(message);
+          }
+          progressiveCursor = pending.advance(sequence);
         }
-        if (_messages.every((existing) => existing.id != message.id)) {
-          _messages.add(message);
-          // Persist/display a fully decoded MESSAGE immediately, even if the
-          // surrounding GET_NEW_MESSAGES transaction later loses a fragment or
-          // END. The durable sync cursor still advances only after END.
-          _events.add(MessageReceived(message));
+
+        final isNew = _messages.every((existing) => existing.id != message.id);
+        if (isNew) _messages.add(message);
+
+        // During an ordered GET_NEW_MESSAGES response, emit the message even if
+        // it was already known to this transport whenever it advances the sync
+        // cursor. The controller persists the message first and only then the
+        // cursor, making an interrupted APRS page resumable without re-sending
+        // already-complete messages.
+        if (isNew || progressiveCursor != null) {
+          _events.add(
+            MessageReceived(message, syncCursor: progressiveCursor),
+          );
         }
       case OpenQspEnd(
         :final requestOperation,
@@ -227,7 +237,7 @@ final class AprsMessagesTransport
     if (since == null || since < 0 || since > 0xffffffff) {
       throw ArgumentError.value(cursor, 'cursor', 'Invalid APRS message cursor');
     }
-    final pending = _PendingSync();
+    final pending = _PendingSync(since);
     _pendingSync = pending;
     pending.touch(responseTimeout);
     try {
@@ -373,9 +383,18 @@ final class AprsMessagesTransport
 }
 
 final class _PendingSync {
+  _PendingSync(this._cursor);
+
   final List<InternetMessage> messages = [];
   final Completer<SyncBatch> completer = Completer<SyncBatch>();
+  int _cursor;
   Timer? _timeout;
+
+  String? advance(int sequence) {
+    if (sequence <= _cursor) return null;
+    _cursor = sequence;
+    return '$sequence';
+  }
 
   void touch(Duration timeout) {
     if (completer.isCompleted) return;
