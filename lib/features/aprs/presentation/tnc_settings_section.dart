@@ -63,11 +63,6 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
     if (selected != null) await controller.select(selected);
   }
 
-  Future<void> _showDiagnostics() => showDialog<void>(
-    context: context,
-    builder: (_) => _TncDiagnosticsDialog(controller: controller),
-  );
-
   void _message(String value) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -189,225 +184,19 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
               ),
             ],
             const SizedBox(height: 14),
-            Wrap(
-              spacing: 10,
-              runSpacing: 8,
-              children: [
-                FilledButton.icon(
-                  key: const Key('checkOpenQspButton'),
-                  onPressed:
-                      controller.kissReady &&
-                          controller.openQspCheckState !=
-                              OpenQspCheckState.waiting
-                      ? controller.checkOpenQsp
-                      : null,
-                  icon: const Icon(Icons.cell_tower),
-                  label: const Text('Comprobar OpenQSP'),
-                ),
-                OutlinedButton.icon(
-                  key: const Key('tncDiagnosticsButton'),
-                  onPressed: _showDiagnostics,
-                  icon: const Icon(Icons.monitor_heart_outlined),
-                  label: const Text('Diagnóstico'),
-                ),
-              ],
+            FilledButton.icon(
+              key: const Key('checkOpenQspButton'),
+              onPressed:
+                  controller.kissReady &&
+                      controller.openQspCheckState != OpenQspCheckState.waiting
+                  ? controller.checkOpenQsp
+                  : null,
+              icon: const Icon(Icons.cell_tower),
+              label: const Text('Comprobar OpenQSP'),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _TncDiagnosticsDialog extends StatefulWidget {
-  const _TncDiagnosticsDialog({required this.controller});
-
-  final TncSettingsController controller;
-
-  @override
-  State<_TncDiagnosticsDialog> createState() => _TncDiagnosticsDialogState();
-}
-
-class _TncDiagnosticsDialogState extends State<_TncDiagnosticsDialog> {
-  TncSettingsController get controller => widget.controller;
-
-  @override
-  void initState() {
-    super.initState();
-    controller.addListener(_refresh);
-  }
-
-  void _refresh() {
-    if (mounted) setState(() {});
-  }
-
-  @override
-  void dispose() {
-    controller.removeListener(_refresh);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final media = MediaQuery.sizeOf(context);
-    return AlertDialog(
-      key: const Key('tncDiagnostics'),
-      title: const Text('Diagnóstico TNC/APRS'),
-      content: SizedBox(
-        width: media.width.clamp(280.0, 720.0),
-        height: media.height * 0.72,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _DiagnosticsCounters(controller: controller),
-              const SizedBox(height: 20),
-              _ActivityLog(
-                title: 'Últimos KISS RX/TX',
-                entries: controller.kissActivity,
-              ),
-              const SizedBox(height: 16),
-              _ActivityLog(
-                title: 'Últimos AX.25 RX',
-                entries: controller.ax25Activity,
-              ),
-              const SizedBox(height: 16),
-              _ActivityLog(
-                title: 'Últimos APRS RX',
-                entries: controller.aprsActivity,
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cerrar'),
-        ),
-      ],
-    );
-  }
-}
-
-class _DiagnosticsCounters extends StatelessWidget {
-  const _DiagnosticsCounters({required this.controller});
-
-  final TncSettingsController controller;
-
-  @override
-  Widget build(BuildContext context) => Column(
-    children: [
-      _DiagnosticCounter(label: 'Bluetooth RX bytes', value: controller.rxBytes),
-      _DiagnosticCounter(label: 'KISS RX frames', value: controller.rxKissFrames),
-      _DiagnosticCounter(label: 'KISS TX frames', value: controller.txKissFrames),
-      _DiagnosticCounter(label: 'AX.25 RX frames', value: controller.rxAx25Frames),
-      _DiagnosticCounter(
-        label: 'AX.25 decode errors',
-        value: controller.ax25DecodeErrors,
-      ),
-      _DiagnosticCounter(label: 'APRS RX packets', value: controller.rxAprsPackets),
-      _DiagnosticCounter(
-        label: 'APRS parse errors',
-        value: controller.aprsParseErrors,
-      ),
-      _DiagnosticCounter(label: 'APRS messages', value: controller.aprsMessages),
-      _DiagnosticCounter(label: 'APRS ACKs RX', value: controller.aprsAcks),
-      _DiagnosticCounter(label: 'APRS rejects RX', value: controller.aprsRejects),
-      _DiagnosticCounter(
-        label: 'OpenQSP packets RX',
-        value: controller.openQspRxPackets,
-      ),
-      _DiagnosticCounter(
-        label: 'OpenQSP fragments RX',
-        value: controller.openQspFragmentsRx,
-      ),
-      _DiagnosticCounter(
-        label: 'OpenQSP complete frames',
-        value: controller.openQspFramesRx,
-      ),
-      _DiagnosticCounter(
-        label: 'OpenQSP decode errors',
-        value: controller.openQspErrors,
-      ),
-      _DiagnosticTextValue(
-        label: 'Último OpenQSP válido',
-        value: controller.lastValidOpenQspRx?.toLocal().toIso8601String() ?? '-',
-      ),
-    ],
-  );
-}
-
-class _DiagnosticCounter extends StatelessWidget {
-  const _DiagnosticCounter({required this.label, required this.value});
-
-  final String label;
-  final int value;
-
-  @override
-  Widget build(BuildContext context) => _DiagnosticTextValue(
-    label: label,
-    value: '$value',
-  );
-}
-
-class _DiagnosticTextValue extends StatelessWidget {
-  const _DiagnosticTextValue({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 3),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Expanded(child: Text(label)),
-        const SizedBox(width: 12),
-        SelectableText(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-      ],
-    ),
-  );
-}
-
-class _ActivityLog extends StatelessWidget {
-  const _ActivityLog({required this.title, required this.entries});
-
-  final String title;
-  final List<String> entries;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(title, style: Theme.of(context).textTheme.labelLarge),
-        const SizedBox(height: 6),
-        Container(
-          constraints: const BoxConstraints(minHeight: 52, maxHeight: 220),
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: colors.surfaceContainerLow,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: colors.outlineVariant),
-          ),
-          child: entries.isEmpty
-              ? const Text('Sin actividad')
-              : SingleChildScrollView(
-                  child: SelectableText(
-                    entries.join('\n\n'),
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                    ),
-                  ),
-                ),
-        ),
-      ],
     );
   }
 }
