@@ -1,6 +1,8 @@
 import '../domain/message_models.dart';
 
 abstract interface class MessagesRepository {
+  String get syncCursorKey;
+
   Future<List<InternetMessage>> messages({
     required String callsign,
     required String token,
