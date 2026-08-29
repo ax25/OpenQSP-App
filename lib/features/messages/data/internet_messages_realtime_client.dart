@@ -59,8 +59,6 @@ class InternetMessagesRealtimeClient implements MessagesRealtimeClient {
           ? RealtimeConnectionState.reconnecting
           : RealtimeConnectionState.connecting,
     );
-    // Query authentication is the documented cross-platform alternative. It
-    // works on Flutter web where custom WebSocket headers are unavailable.
     final uri = _wsUri.replace(queryParameters: {'token': _token!});
     try {
       final channel = _connector(uri);
@@ -92,6 +90,36 @@ class InternetMessagesRealtimeClient implements MessagesRealtimeClient {
         'data': final Map<String, dynamic> data,
       }) {
         _events.add(MessageReceived(InternetMessage.fromJson(data)));
+        return;
+      }
+      if (decoded case {
+        'type': 'message.delivered',
+        'data': {
+          'id': final String id,
+          'delivered_at': final String deliveredAt,
+        },
+      }) {
+        _events.add(
+          MessageDelivered(
+            messageId: id,
+            deliveredAt: DateTime.parse(deliveredAt).toUtc(),
+          ),
+        );
+        return;
+      }
+      if (decoded case {
+        'type': 'message.read',
+        'data': {
+          'peer': final String peer,
+          'last_read_message_id': final String lastReadMessageId,
+        },
+      }) {
+        _events.add(
+          MessageRead(
+            peer: peer.toUpperCase(),
+            lastReadMessageId: lastReadMessageId,
+          ),
+        );
       }
     } on FormatException catch (error, stackTrace) {
       _events.addError(error, stackTrace);
