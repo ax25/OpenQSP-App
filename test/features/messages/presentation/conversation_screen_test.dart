@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/features/messages/application/messages_controller.dart';
+import 'package:openqsp_app/features/messages/data/local_messages_store.dart';
 import 'package:openqsp_app/features/messages/data/messages_transport.dart';
 import 'package:openqsp_app/features/messages/domain/message_models.dart';
 import 'package:openqsp_app/features/messages/presentation/conversation_screen.dart';
@@ -31,7 +32,8 @@ void main() {
         deliveryStatus: MessageDeliveryStatus.read,
       ),
     ]);
-    final controller = _controller(repository);
+    final controller = await _controller(repository);
+    addTearDown(controller.dispose);
 
     await tester.pumpWidget(
       MaterialApp(
@@ -79,7 +81,8 @@ void main() {
 
   testWidgets('composer limits input and refuses blank messages', (tester) async {
     final repository = _Repository([]);
-    final controller = _controller(repository);
+    final controller = await _controller(repository);
+    addTearDown(controller.dispose);
     await tester.pumpWidget(
       MaterialApp(
         home: ConversationScreen(
@@ -111,7 +114,8 @@ void main() {
 
   testWidgets('sending keeps focus in the message composer', (tester) async {
     final repository = _Repository([]);
-    final controller = _controller(repository);
+    final controller = await _controller(repository);
+    addTearDown(controller.dispose);
     await tester.pumpWidget(
       MaterialApp(
         home: ConversationScreen(
@@ -157,6 +161,7 @@ void main() {
       token: 'token',
       repository: repository,
       realtime: realtime,
+      localStore: _MemoryLocalStore(),
     );
     await controller.start();
     addTearDown(controller.dispose);
@@ -195,12 +200,17 @@ void main() {
   });
 }
 
-MessagesController _controller(_Repository repository) => MessagesController(
-  callsign: 'EA3GNU',
-  token: 'token',
-  repository: repository,
-  realtime: _Realtime(),
-);
+Future<MessagesController> _controller(_Repository repository) async {
+  final controller = MessagesController(
+    callsign: 'EA3GNU',
+    token: 'token',
+    repository: repository,
+    realtime: _Realtime(),
+    localStore: _MemoryLocalStore(),
+  );
+  await controller.start();
+  return controller;
+}
 
 InternetMessage _message(
   String id,
@@ -215,6 +225,48 @@ InternetMessage _message(
   createdAt: createdAt,
   deliveryStatus: deliveryStatus,
 );
+
+class _MemoryLocalStore implements LocalMessagesStore {
+  final _items = <InternetMessage>[];
+  final _cursors = <String, String>{};
+
+  @override
+  Future<List<InternetMessage>> messages(String callsign) async =>
+      List.of(_items);
+
+  @override
+  Future<void> upsert(String callsign, InternetMessage message) async =>
+      upsertAll(callsign, [message]);
+
+  @override
+  Future<void> upsertAll(
+    String callsign,
+    Iterable<InternetMessage> messages,
+  ) async {
+    for (final incoming in messages) {
+      final index = _items.indexWhere((item) => item.id == incoming.id);
+      if (index < 0) {
+        _items.add(incoming);
+      } else {
+        _items[index] = incoming;
+      }
+    }
+    _items.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+  }
+
+  @override
+  Future<String?> cursor(String callsign, String transport) async =>
+      _cursors[transport];
+
+  @override
+  Future<void> setCursor(
+    String callsign,
+    String transport,
+    String value,
+  ) async {
+    _cursors[transport] = value;
+  }
+}
 
 class _Repository implements MessagesRepository {
   _Repository(this.items);
