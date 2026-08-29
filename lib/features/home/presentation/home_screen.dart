@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../app/theme/openqsp_theme.dart';
 import '../../../core/network/server_status_client.dart';
+import '../../aprs/application/aprs_session_controller.dart';
 import '../../auth/application/auth_session.dart';
 import '../../auth/data/auth_client.dart';
 import '../../messages/application/messages_controller.dart';
@@ -27,6 +30,7 @@ class HomeScreen extends StatefulWidget {
     required this.authSession,
     required this.messagesRepository,
     required this.messagesRealtimeFactory,
+    this.aprsSession,
     this.onOpenSettings,
   });
 
@@ -36,6 +40,7 @@ class HomeScreen extends StatefulWidget {
   final AuthSession authSession;
   final MessagesRepository messagesRepository;
   final MessagesRealtimeClient Function() messagesRealtimeFactory;
+  final AprsSessionController? aprsSession;
   final VoidCallback? onOpenSettings;
 
   @override
@@ -44,6 +49,8 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ServerConnectionState _serverState = ServerConnectionState.checking;
+
+  bool get _aprsActive => widget.aprsSession?.active ?? false;
 
   @override
   void initState() {
@@ -54,7 +61,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _checkServer();
+    if (state == AppLifecycleState.resumed && !_aprsActive) _checkServer();
   }
 
   @override
@@ -67,12 +74,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _checkServer() async {
+    if (_aprsActive) return;
     final wasConnected = _serverState == ServerConnectionState.connected;
     if (_serverState != ServerConnectionState.checking && mounted) {
       setState(() => _serverState = ServerConnectionState.checking);
     }
     final available = await widget.serverStatusClient.isAvailable();
-    if (!mounted) return;
+    if (!mounted || _aprsActive) return;
     setState(() {
       if (!available) {
         _serverState = ServerConnectionState.unavailable;
@@ -85,6 +93,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _onMessagesTap() async {
+    if (_aprsActive) {
+      _showMessage('Messages over APRS are not available yet');
+      return;
+    }
     if (_serverState == ServerConnectionState.unavailable ||
         _serverState == ServerConnectionState.checking) {
       _showMessage('Server unavailable');
@@ -235,6 +247,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             callsign: widget.callsign,
                             onEditCallsign: widget.onEditCallsign,
                             onOpenSettings: widget.onOpenSettings,
+                            aprsSession: widget.aprsSession,
                           ),
                           const SizedBox(height: 30),
                           Text(
@@ -264,7 +277,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               Padding(
                 padding: const EdgeInsets.only(top: 8, bottom: 24),
-                child: _Status(state: _serverState, onRetry: _checkServer),
+                child: _TransportStatus(
+                  aprsSession: widget.aprsSession,
+                  internetState: _serverState,
+                  onInternetRetry: _checkServer,
+                ),
               ),
             ],
           ),
@@ -279,11 +296,13 @@ class _HomeHeader extends StatelessWidget {
     required this.callsign,
     required this.onEditCallsign,
     required this.onOpenSettings,
+    required this.aprsSession,
   });
 
   final String callsign;
   final VoidCallback onEditCallsign;
   final VoidCallback? onOpenSettings;
+  final AprsSessionController? aprsSession;
 
   @override
   Widget build(BuildContext context) {
@@ -299,6 +318,7 @@ class _HomeHeader extends StatelessWidget {
           callsign: callsign,
           onEdit: onEditCallsign,
           onOpenSettings: onOpenSettings,
+          aprsSession: aprsSession,
           alignment: constraints.maxWidth < 600
               ? WrapAlignment.start
               : WrapAlignment.end,
@@ -329,12 +349,14 @@ class _HeaderActions extends StatelessWidget {
     required this.callsign,
     required this.onEdit,
     required this.onOpenSettings,
+    required this.aprsSession,
     required this.alignment,
   });
 
   final String callsign;
   final VoidCallback onEdit;
   final VoidCallback? onOpenSettings;
+  final AprsSessionController? aprsSession;
   final WrapAlignment alignment;
 
   @override
@@ -346,7 +368,7 @@ class _HeaderActions extends StatelessWidget {
       runSpacing: 6,
       children: [
         _CallsignAction(callsign: callsign, onEdit: onEdit),
-        const _TransportSelector(),
+        _TransportSelector(aprsSession: aprsSession),
         if (onOpenSettings != null)
           IconButton(
             key: const Key('settingsButton'),
@@ -404,19 +426,55 @@ class _CallsignText extends StatelessWidget {
 }
 
 class _TransportSelector extends StatelessWidget {
-  const _TransportSelector();
+  const _TransportSelector({required this.aprsSession});
+
+  final AprsSessionController? aprsSession;
 
   @override
   Widget build(BuildContext context) {
+    final session = aprsSession;
+    if (session == null) return const _TransportSelectorBody();
+    return AnimatedBuilder(
+      animation: session,
+      builder: (context, _) => _TransportSelectorBody(
+        aprsSelected: session.active,
+        aprsEnabled: true,
+        onSelected: (value) {
+          if (value == 'APRS') {
+            unawaited(session.activate());
+          } else if (value == 'Internet') {
+            unawaited(session.deactivate());
+          }
+        },
+      ),
+    );
+  }
+}
+
+class _TransportSelectorBody extends StatelessWidget {
+  const _TransportSelectorBody({
+    this.aprsSelected = false,
+    this.aprsEnabled = false,
+    this.onSelected,
+  });
+
+  final bool aprsSelected;
+  final bool aprsEnabled;
+  final ValueChanged<String>? onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = aprsSelected ? 'APRS' : 'Internet';
     return PopupMenuButton<String>(
       key: const Key('transportSelector'),
-      initialValue: 'Internet',
+      initialValue: selected,
       padding: EdgeInsets.zero,
       tooltip: 'Select transport',
-      itemBuilder: (_) => const [
-        PopupMenuItem(value: 'Internet', child: Text('Internet')),
-        PopupMenuItem(enabled: false, child: Text('APRS')),
-        PopupMenuItem(enabled: false, child: Text('Winlink')),
+      onSelected: onSelected,
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'Internet', child: Text('Internet')),
+        PopupMenuItem(value: 'APRS', enabled: aprsEnabled, child: const Text('APRS')),
+        const PopupMenuItem(enabled: false, child: Text('Winlink')),
       ],
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
@@ -424,7 +482,7 @@ class _TransportSelector extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              'Internet',
+              selected,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: OpenQspColors.secondaryText,
                 fontWeight: FontWeight.w600,
@@ -439,6 +497,69 @@ class _TransportSelector extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _TransportStatus extends StatelessWidget {
+  const _TransportStatus({
+    required this.aprsSession,
+    required this.internetState,
+    required this.onInternetRetry,
+  });
+
+  final AprsSessionController? aprsSession;
+  final ServerConnectionState internetState;
+  final VoidCallback onInternetRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final session = aprsSession;
+    if (session == null) {
+      return _Status(state: internetState, onRetry: onInternetRetry);
+    }
+    return AnimatedBuilder(
+      animation: session,
+      builder: (context, _) {
+        if (!session.active) {
+          return _Status(state: internetState, onRetry: onInternetRetry);
+        }
+        final positive = session.state == AprsSessionState.available;
+        return InkWell(
+          key: const Key('aprsStatusRetry'),
+          borderRadius: BorderRadius.circular(16),
+          onTap: session.state == AprsSessionState.connecting
+              ? null
+              : () => unawaited(session.retry()),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  positive ? Icons.circle : Icons.circle_outlined,
+                  size: 11,
+                  color: positive
+                      ? OpenQspColors.positive
+                      : OpenQspColors.secondaryText,
+                ),
+                const SizedBox(width: 9),
+                Text(
+                  session.statusLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: positive
+                        ? OpenQspColors.positive
+                        : OpenQspColors.secondaryText,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 }
