@@ -8,6 +8,7 @@ import '../../aprs/application/aprs_session_controller.dart';
 import '../../auth/application/auth_session.dart';
 import '../../auth/data/auth_client.dart';
 import '../../messages/application/messages_controller.dart';
+import '../../messages/data/aprs_messages_transport.dart';
 import '../../messages/data/messages_transport.dart';
 import '../../messages/presentation/messages_screen.dart';
 
@@ -94,7 +95,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _onMessagesTap() async {
     if (_aprsActive) {
-      _showMessage('Messages over APRS are not available yet');
+      final session = widget.aprsSession;
+      if (session == null || session.state != AprsSessionState.available) {
+        _showMessage('APRS Server Unavailable');
+        return;
+      }
+      _openAprsMessages(session);
       return;
     }
     if (_serverState == ServerConnectionState.unavailable ||
@@ -213,6 +219,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             realtime: widget.messagesRealtimeFactory(),
             onAuthenticationRequired: () =>
                 widget.authSession.invalidate(widget.callsign),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openAprsMessages(AprsSessionController session) {
+    final transport = AprsMessagesTransport(
+      session: session,
+      callsign: widget.callsign,
+    );
+    Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        builder: (_) => MessagesScreen(
+          controller: MessagesController(
+            callsign: widget.callsign,
+            token: '',
+            repository: transport,
+            realtime: transport,
           ),
         ),
       ),
@@ -473,7 +498,11 @@ class _TransportSelectorBody extends StatelessWidget {
       onSelected: onSelected,
       itemBuilder: (_) => [
         const PopupMenuItem(value: 'Internet', child: Text('Internet')),
-        PopupMenuItem(value: 'APRS', enabled: aprsEnabled, child: const Text('APRS')),
+        PopupMenuItem(
+          value: 'APRS',
+          enabled: aprsEnabled,
+          child: const Text('APRS'),
+        ),
         const PopupMenuItem(enabled: false, child: Text('Winlink')),
       ],
       child: Padding(
