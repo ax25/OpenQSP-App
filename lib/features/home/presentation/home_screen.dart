@@ -27,6 +27,7 @@ class HomeScreen extends StatefulWidget {
     required this.authSession,
     required this.messagesRepository,
     required this.messagesRealtimeFactory,
+    required this.onOpenSettings,
   });
 
   final String callsign;
@@ -35,6 +36,7 @@ class HomeScreen extends StatefulWidget {
   final AuthSession authSession;
   final MessagesRepository messagesRepository;
   final MessagesRealtimeClient Function() messagesRealtimeFactory;
+  final VoidCallback onOpenSettings;
 
   @override
   State<HomeScreen> createState() => _HomeScreenState();
@@ -232,6 +234,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           _HomeHeader(
                             callsign: widget.callsign,
                             onEditCallsign: widget.onEditCallsign,
+                            onOpenSettings: widget.onOpenSettings,
                           ),
                           const SizedBox(height: 30),
                           Text(
@@ -272,10 +275,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 }
 
 class _HomeHeader extends StatelessWidget {
-  const _HomeHeader({required this.callsign, required this.onEditCallsign});
+  const _HomeHeader({
+    required this.callsign,
+    required this.onEditCallsign,
+    required this.onOpenSettings,
+  });
 
   final String callsign;
   final VoidCallback onEditCallsign;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -290,6 +298,7 @@ class _HomeHeader extends StatelessWidget {
         final headerActions = _HeaderActions(
           callsign: callsign,
           onEdit: onEditCallsign,
+          onOpenSettings: onOpenSettings,
         );
 
         if (constraints.maxWidth < 480) {
@@ -315,10 +324,12 @@ class _HeaderActions extends StatelessWidget {
   const _HeaderActions({
     required this.callsign,
     required this.onEdit,
+    required this.onOpenSettings,
   });
 
   final String callsign;
   final VoidCallback onEdit;
+  final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -330,6 +341,13 @@ class _HeaderActions extends StatelessWidget {
         ),
         const SizedBox(width: 10),
         const _TransportSelector(),
+        const SizedBox(width: 4),
+        IconButton(
+          key: const Key('settingsButton'),
+          tooltip: 'Configuración',
+          onPressed: onOpenSettings,
+          icon: const Icon(Icons.settings_outlined),
+        ),
       ],
     );
   }
