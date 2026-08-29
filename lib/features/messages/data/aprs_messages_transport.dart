@@ -120,12 +120,15 @@ final class AprsMessagesTransport
       case OpenQspMessage():
         final message = _fromOpenQspMessage(object);
         final pending = _pendingSync;
-        if (pending != null) {
-          if (pending.messages.every((existing) => existing.id != message.id)) {
-            pending.messages.add(message);
-          }
-        } else if (_messages.every((existing) => existing.id != message.id)) {
+        if (pending != null &&
+            pending.messages.every((existing) => existing.id != message.id)) {
+          pending.messages.add(message);
+        }
+        if (_messages.every((existing) => existing.id != message.id)) {
           _messages.add(message);
+          // Persist/display a fully decoded MESSAGE immediately, even if the
+          // surrounding GET_NEW_MESSAGES transaction later loses a fragment or
+          // END. The durable sync cursor still advances only after END.
           _events.add(MessageReceived(message));
         }
       case OpenQspEnd(
