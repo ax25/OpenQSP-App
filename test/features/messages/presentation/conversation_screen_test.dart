@@ -108,6 +108,88 @@ void main() {
     await tester.pump();
     expect(repository.sentTexts, hasLength(1));
   });
+
+  testWidgets('sending keeps focus in the message composer', (tester) async {
+    final repository = _Repository([]);
+    final controller = _controller(repository);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationScreen(
+          controller: controller,
+          remoteCallsign: 'N0CALL',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final composerFinder = find.byKey(const Key('messageComposer'));
+    await tester.tap(composerFinder);
+    await tester.enterText(composerFinder, 'hello');
+    await tester.tap(find.byKey(const Key('sendMessage')));
+    await tester.pumpAndSettle();
+
+    final composer = tester.widget<TextField>(composerFinder);
+    expect(repository.sentTexts, ['hello']);
+    expect(composer.controller!.text, isEmpty);
+    expect(composer.focusNode!.hasFocus, isTrue);
+  });
+
+  testWidgets('incoming message automatically scrolls to the latest message', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final now = DateTime.now();
+    final repository = _Repository([
+      for (var index = 0; index < 18; index++)
+        _message(
+          'initial-$index',
+          now.subtract(Duration(minutes: 18 - index)),
+          from: index.isEven ? 'N0CALL' : 'EA3GNU',
+        ),
+    ]);
+    final realtime = _Realtime();
+    final controller = MessagesController(
+      callsign: 'EA3GNU',
+      token: 'token',
+      repository: repository,
+      realtime: realtime,
+    );
+    await controller.start();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationScreen(
+          controller: controller,
+          remoteCallsign: 'N0CALL',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final listFinder = find.byKey(const Key('messageList'));
+    var scrollable = tester.state<ScrollableState>(
+      find.descendant(of: listFinder, matching: find.byType(Scrollable)),
+    );
+    scrollable.position.jumpTo(0);
+    await tester.pump();
+    expect(scrollable.position.pixels, 0);
+
+    realtime.emit(
+      _message('live-message', now.add(const Duration(minutes: 1)), from: 'N0CALL'),
+    );
+    await tester.pumpAndSettle();
+
+    scrollable = tester.state<ScrollableState>(
+      find.descendant(of: listFinder, matching: find.byType(Scrollable)),
+    );
+    expect(scrollable.position.pixels, scrollable.position.maxScrollExtent);
+    expect(find.byKey(const Key('message-live-message')), findsOneWidget);
+  });
 }
 
 MessagesController _controller(_Repository repository) => MessagesController(
@@ -175,6 +257,7 @@ class _Realtime implements MessagesRealtimeClient {
   Stream<RealtimeConnectionState> get connectionStates => _states.stream;
   @override
   Future<void> connect({required String callsign, required String token}) async {}
+  void emit(InternetMessage message) => _events.add(MessageReceived(message));
   @override
   Future<void> close() async {
     await _events.close();
