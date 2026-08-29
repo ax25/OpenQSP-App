@@ -299,20 +299,24 @@ class _HomeHeader extends StatelessWidget {
           callsign: callsign,
           onEdit: onEditCallsign,
           onOpenSettings: onOpenSettings,
+          alignment: constraints.maxWidth < 600
+              ? WrapAlignment.start
+              : WrapAlignment.end,
         );
 
-        if (constraints.maxWidth < 480) {
+        if (constraints.maxWidth < 600) {
           return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [title, const SizedBox(height: 8), headerActions],
           );
         }
 
         return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             title,
-            const Spacer(),
-            Flexible(child: headerActions),
+            const SizedBox(width: 24),
+            Expanded(child: headerActions),
           ],
         );
       },
@@ -325,31 +329,31 @@ class _HeaderActions extends StatelessWidget {
     required this.callsign,
     required this.onEdit,
     required this.onOpenSettings,
+    required this.alignment,
   });
 
   final String callsign;
   final VoidCallback onEdit;
   final VoidCallback? onOpenSettings;
+  final WrapAlignment alignment;
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+    return Wrap(
+      alignment: alignment,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 10,
+      runSpacing: 6,
       children: [
-        Flexible(
-          child: _CallsignAction(callsign: callsign, onEdit: onEdit),
-        ),
-        const SizedBox(width: 10),
+        _CallsignAction(callsign: callsign, onEdit: onEdit),
         const _TransportSelector(),
-        if (onOpenSettings != null) ...[
-          const SizedBox(width: 4),
+        if (onOpenSettings != null)
           IconButton(
             key: const Key('settingsButton'),
             tooltip: 'Configuración',
             onPressed: onOpenSettings,
             icon: const Icon(Icons.settings_outlined),
           ),
-        ],
       ],
     );
   }
@@ -369,7 +373,7 @@ class _CallsignAction extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Flexible(child: _CallsignText(callsign)),
+        _CallsignText(callsign),
         IconButton(
           key: const Key('editCallsignButton'),
           tooltip: 'Change callsign',
