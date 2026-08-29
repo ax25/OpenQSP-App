@@ -21,9 +21,10 @@ Ax25Frame frame(
   List<int> information, {
   int control = 0x03,
   int? pid = 0xf0,
+  Ax25Address frameSource = source,
 }) => Ax25Frame(
   destination: destination,
-  source: source,
+  source: frameSource,
   digipeaters: const [],
   control: control,
   pid: pid,
@@ -62,6 +63,43 @@ void main() {
       expect((ack! as AprsAck).messageId, 'A1');
       expect(reject, isA<AprsReject>());
       expect((reject! as AprsReject).messageId, '12');
+    });
+  });
+
+  group('third-party traffic', () {
+    test('unwraps an IGate packet and exposes the logical APRS source', () {
+      const igate = Ax25Address(
+        callsign: 'OQSPK',
+        ssid: 1,
+        hasBeenRepeated: false,
+        isLast: true,
+      );
+      final packet = parser.parse(
+        frame(
+          '}OQSP>APOQSP,TCPIP*,qAC,OQSPK-1::EA3GNU-5 :Q1:ABC:00/01:AUYABQEAAAAP{00'
+              .codeUnits,
+          frameSource: igate,
+        ),
+      );
+
+      expect(packet, isA<AprsTextMessage>());
+      final message = packet! as AprsTextMessage;
+      expect(message.frame.source.toString(), 'OQSP');
+      expect(message.frame.destination.toString(), 'APOQSP');
+      expect(message.addressee, 'EA3GNU-5');
+      expect(message.text, 'Q1:ABC:00/01:AUYABQEAAAAP');
+      expect(message.messageId, '00');
+    });
+
+    test('rejects malformed and nested third-party packets without throwing', () {
+      for (final text in [
+        '}',
+        '}OQSPAPOQSP::EA3GNU   :HELLO',
+        '}OQSP>APOQSP:',
+        '}OQSP>APOQSP:}OQSP>APOQSP::EA3GNU   :HELLO',
+      ]) {
+        expect(parser.parse(frame(text.codeUnits)), isA<AprsInvalid>());
+      }
     });
   });
 
