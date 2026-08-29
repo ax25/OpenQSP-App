@@ -4,10 +4,14 @@ import '../core/network/server_status_client.dart';
 import '../features/auth/application/auth_session.dart';
 import '../features/auth/data/auth_client.dart';
 import '../features/auth/data/auth_token_store.dart';
+import '../features/aprs/application/tnc_settings_controller.dart';
+import '../features/aprs/data/bluetooth_tnc_service.dart';
+import '../features/aprs/data/bluetooth_tnc_storage.dart';
 import '../features/callsign/data/callsign_store.dart';
 import '../features/home/presentation/home_screen.dart';
 import '../features/messages/data/messages_transport.dart';
 import '../features/onboarding/presentation/callsign_onboarding_screen.dart';
+import '../features/settings/presentation/settings_screen.dart';
 import 'theme/openqsp_theme.dart';
 
 class OpenQspApp extends StatefulWidget {
@@ -19,6 +23,7 @@ class OpenQspApp extends StatefulWidget {
     this.authTokenStore,
     required this.messagesRepository,
     required this.messagesRealtimeFactory,
+    this.tncControllerFactory,
   });
 
   final CallsignStore? callsignStore;
@@ -27,6 +32,7 @@ class OpenQspApp extends StatefulWidget {
   final AuthTokenStore? authTokenStore;
   final MessagesRepository messagesRepository;
   final MessagesRealtimeClient Function() messagesRealtimeFactory;
+  final TncSettingsController Function()? tncControllerFactory;
 
   @override
   State<OpenQspApp> createState() => _OpenQspAppState();
@@ -89,6 +95,17 @@ class _OpenQspAppState extends State<OpenQspApp> {
               authSession: _authSession,
               messagesRepository: widget.messagesRepository,
               messagesRealtimeFactory: widget.messagesRealtimeFactory,
+              onOpenSettings: () => _navigatorKey.currentState!.push<void>(
+                MaterialPageRoute(
+                  builder: (_) => SettingsScreen(
+                    tncController: widget.tncControllerFactory?.call() ??
+                        TncSettingsController(
+                          storage: PreferencesBluetoothTncStorage(),
+                          service: AndroidBluetoothTncService(),
+                        ),
+                  ),
+                ),
+              ),
               onEditCallsign: () async {
                 await _navigatorKey.currentState!.push<void>(
                   MaterialPageRoute(
