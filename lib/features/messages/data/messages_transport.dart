@@ -28,13 +28,11 @@ abstract interface class MessagesSyncCursorNamespace {
   String get syncCursorKey;
 }
 
-String messagesSyncCursorKey(MessagesRepository repository) =>
-    repository is MessagesSyncCursorNamespace
-    ? repository.syncCursorKey
-    : 'internet';
-
-extension MessagesRepositorySyncCursor on MessagesRepository {
-  String get syncCursorKey => messagesSyncCursorKey(this);
+String messagesSyncCursorKey(MessagesRepository repository) {
+  if (repository is MessagesSyncCursorNamespace) {
+    return repository.syncCursorKey;
+  }
+  return 'internet';
 }
 
 abstract interface class MessagesRealtimeClient {
