@@ -35,6 +35,7 @@ class MessagesController extends ChangeNotifier {
   RealtimeConnectionState connectionState = RealtimeConnectionState.connecting;
 
   String get _syncCursorKey => messagesSyncCursorKey(repository);
+  bool get synchronizing => _reconcileInFlight != null;
 
   List<InternetMessage> historyFor(String remote) {
     final peer = _key(remote);
@@ -128,8 +129,12 @@ class MessagesController extends ChangeNotifier {
     if (active != null) return active;
     final future = _reconcile();
     _reconcileInFlight = future;
+    notifyListeners();
     return future.whenComplete(() {
-      if (identical(_reconcileInFlight, future)) _reconcileInFlight = null;
+      if (identical(_reconcileInFlight, future)) {
+        _reconcileInFlight = null;
+        notifyListeners();
+      }
     });
   }
 
