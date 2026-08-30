@@ -88,6 +88,7 @@ class TncSettingsController extends ChangeNotifier {
   int openQspErrors = 0;
   OpenQspFrameObject? lastOpenQspObject;
   DateTime? lastValidOpenQspRx;
+  String? lastOpenQspIgate;
   OpenQspCheckState openQspCheckState = OpenQspCheckState.notChecked;
   int aprsSsid = 0;
   Timer? _openQspTimer;
@@ -157,6 +158,10 @@ class TncSettingsController extends ChangeNotifier {
         aprsMessages++;
         if (_isOpenQspResponse(packet)) {
           openQspRxPackets++;
+          lastValidOpenQspRx = DateTime.now().toUtc();
+          if (packet.igate case final igate?) {
+            lastOpenQspIgate = igate.toString();
+          }
           if (packet.messageId case final messageId?) {
             unawaited(_sendAprsAck(messageId));
           }
@@ -315,6 +320,8 @@ class TncSettingsController extends ChangeNotifier {
     _cancelOpenQspCheckTimers();
     openQspCheckState = OpenQspCheckState.waiting;
     _openQspCheckDeadline = DateTime.now().add(openQspTimeout);
+    lastValidOpenQspRx = null;
+    lastOpenQspIgate = null;
     _notify();
 
     try {
