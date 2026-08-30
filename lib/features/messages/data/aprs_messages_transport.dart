@@ -97,8 +97,9 @@ final class AprsMessagesTransport
       AprsSessionState.available || AprsSessionState.slow =>
         RealtimeConnectionState.connected,
       AprsSessionState.connecting => RealtimeConnectionState.reconnecting,
-      AprsSessionState.inactive || AprsSessionState.unavailable =>
-        RealtimeConnectionState.disconnected,
+      AprsSessionState.inactive ||
+      AprsSessionState.notResponding ||
+      AprsSessionState.unavailable => RealtimeConnectionState.disconnected,
     };
     if (_lastEmittedConnectionState == state) return;
     _lastEmittedConnectionState = state;
