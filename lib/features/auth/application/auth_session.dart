@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import '../data/auth_client.dart';
 import '../data/auth_token_store.dart';
 
@@ -8,8 +10,11 @@ class AuthSession {
 
   final AuthClient client;
   final AuthTokenStore tokenStore;
+  final _authenticationRequired = StreamController<String>.broadcast();
   String? _activeCallsign;
   String? _activeToken;
+
+  Stream<String> get authenticationRequired => _authenticationRequired.stream;
 
   String? tokenFor(String callsign) =>
       _activeCallsign == _normalize(callsign) ? _activeToken : null;
@@ -45,8 +50,13 @@ class AuthSession {
   }
 
   Future<void> invalidate(String callsign) async {
+    final normalized = _normalize(callsign);
+    final wasActive = _activeCallsign == normalized && _activeToken != null;
     _clearActive(callsign);
     await tokenStore.delete(callsign);
+    if (wasActive && !_authenticationRequired.isClosed) {
+      _authenticationRequired.add(normalized);
+    }
   }
 
   void _setActive(String callsign, String token) {
@@ -62,4 +72,6 @@ class AuthSession {
   }
 
   String _normalize(String callsign) => callsign.trim().toUpperCase();
+
+  Future<void> close() => _authenticationRequired.close();
 }
