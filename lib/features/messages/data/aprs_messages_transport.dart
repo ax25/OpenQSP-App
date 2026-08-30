@@ -253,7 +253,7 @@ final class AprsMessagesTransport
     pending.touch(responseTimeout);
     session.setActivity(AprsActivityState.askingForNewMessages);
     try {
-      await _sendObject(OpenQspGetNewMessages(since: since, max: 20));
+      await _sendObject(OpenQspGetNewMessages(since: since, max: 8));
       return await pending.completer.future;
     } finally {
       pending.cancelTimeout();
