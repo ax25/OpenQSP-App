@@ -21,7 +21,8 @@ final class AprsMessagesTransport
     implements
         MessagesRepository,
         MessagesRealtimeClient,
-        MessagesSyncCursorNamespace {
+        MessagesSyncCursorNamespace,
+        RetryableMessagesRepository {
   AprsMessagesTransport({
     required this.session,
     required String callsign,
@@ -38,20 +39,25 @@ final class AprsMessagesTransport
   static const OpenQspCodec _codec = OpenQspCodec();
   static const Ax25Encoder _ax25Encoder = Ax25Encoder();
   static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
+  static final RegExp _ackActivityId = RegExp(r'\bID: ([0-9A-Za-z]{1,5})\b');
 
   final StreamController<MessagingEvent> _events =
       StreamController<MessagingEvent>.broadcast();
   final StreamController<RealtimeConnectionState> _connections =
       StreamController<RealtimeConnectionState>.broadcast();
   final List<InternetMessage> _messages = [];
+  final Map<String, _PendingSend> _pendingSends = {};
+  final Map<String, _PendingSend> _pendingByAprsMessageId = {};
+  final List<_PendingSend> _pendingStoredOrder = [];
   Future<void> _operationTail = Future<void>.value();
   Future<SyncBatch>? _syncInFlight;
   int _lastObservedOpenQspFrameCount = 0;
   int _lastObservedOpenQspFragments = 0;
+  int _lastObservedAprsAcks = 0;
   RealtimeConnectionState? _lastEmittedConnectionState;
-  Completer<void>? _storedResponse;
   _PendingSync? _pendingSync;
   int _localSequence = 0;
+  int _nextAprsMessageId = 0;
   bool _connected = false;
   bool _closed = false;
 
@@ -80,6 +86,7 @@ final class AprsMessagesTransport
       _connected = true;
       _lastObservedOpenQspFrameCount = _tnc.openQspFramesRx;
       _lastObservedOpenQspFragments = _tnc.openQspFragmentsRx;
+      _lastObservedAprsAcks = _tnc.aprsAcks;
       session.addListener(_onSessionChanged);
       _tnc.addListener(_onTncChanged);
     }
@@ -109,10 +116,17 @@ final class AprsMessagesTransport
   void _onTncChanged() {
     if (_closed) return;
 
-    // GET_NEW_MESSAGES can legitimately take minutes over RF. Treat the
-    // response timeout as an inactivity timeout and refresh it whenever a
-    // valid OpenQSP Q1 fragment arrives, even before a complete Core frame can
-    // be reassembled.
+    final ackCount = _tnc.aprsAcks;
+    if (ackCount != _lastObservedAprsAcks) {
+      _lastObservedAprsAcks = ackCount;
+      final id = _latestAprsAckId();
+      final pending = id == null ? null : _pendingByAprsMessageId[id];
+      if (pending != null && !pending.stored) {
+        _setPendingStatus(pending, MessageDeliveryStatus.processing);
+        pending.touch(responseTimeout, () => _timeoutPending(pending));
+      }
+    }
+
     final fragmentCount = _tnc.openQspFragmentsRx;
     if (fragmentCount != _lastObservedOpenQspFragments) {
       _lastObservedOpenQspFragments = fragmentCount;
@@ -123,10 +137,6 @@ final class AprsMessagesTransport
       }
     }
 
-    // A Core object is an event, not an identity token. Some responses such as
-    // STORED are const canonical instances, so two distinct received frames can
-    // legitimately expose the exact same Dart object instance. Observe the
-    // monotonically increasing completed-frame counter instead.
     final frameCount = _tnc.openQspFramesRx;
     if (frameCount == _lastObservedOpenQspFrameCount) return;
     _lastObservedOpenQspFrameCount = frameCount;
@@ -135,14 +145,15 @@ final class AprsMessagesTransport
 
     switch (object) {
       case OpenQspStored():
-        final pending = _storedResponse;
-        if (pending != null && !pending.isCompleted) pending.complete();
+        final pending = _oldestPendingStoredConfirmation();
+        if (pending != null) _markStored(pending);
       case OpenQspError(:final requestOperation, :final detail):
         final message = detail.isEmpty ? 'Server rejected APRS request' : detail;
         if (requestOperation == OpenQspOperation.sendMessage.code) {
-          final pending = _storedResponse;
-          if (pending != null && !pending.isCompleted) {
-            pending.completeError(StateError(message));
+          final pending = _oldestPendingStoredConfirmation();
+          if (pending != null) {
+            _setPendingStatus(pending, MessageDeliveryStatus.retry);
+            pending.cancelTimeout();
           }
         } else if (requestOperation == OpenQspOperation.getNewMessages.code) {
           final pending = _pendingSync;
@@ -164,16 +175,8 @@ final class AprsMessagesTransport
         final isNew = _messages.every((existing) => existing.id != message.id);
         if (isNew) _messages.add(message);
         session.setActivity(AprsActivityState.newMessageReceived);
-
-        // During an ordered GET_NEW_MESSAGES response, emit the message even if
-        // it was already known to this transport whenever it advances the sync
-        // cursor. The controller persists the message first and only then the
-        // cursor, making an interrupted APRS page resumable without re-sending
-        // already-complete messages.
         if (isNew || progressiveCursor != null) {
-          _events.add(
-            MessageReceived(message, syncCursor: progressiveCursor),
-          );
+          _events.add(MessageReceived(message, syncCursor: progressiveCursor));
         }
       case OpenQspEnd(
         :final requestOperation,
@@ -202,6 +205,47 @@ final class AprsMessagesTransport
       default:
         break;
     }
+  }
+
+  String? _latestAprsAckId() {
+    if (_tnc.aprsActivity.isEmpty) return null;
+    final match = _ackActivityId.firstMatch(_tnc.aprsActivity.first);
+    return match?.group(1)?.toUpperCase();
+  }
+
+  _PendingSend? _oldestPendingStoredConfirmation() {
+    for (final pending in _pendingStoredOrder) {
+      if (!pending.stored && pending.hasBeenTransmitted) return pending;
+    }
+    return null;
+  }
+
+  void _timeoutPending(_PendingSend pending) {
+    if (_closed || pending.stored) return;
+    _setPendingStatus(pending, MessageDeliveryStatus.retry);
+  }
+
+  void _setPendingStatus(_PendingSend pending, MessageDeliveryStatus status) {
+    if (pending.stored && status != MessageDeliveryStatus.stored) return;
+    if (pending.status == status) return;
+    pending.status = status;
+    final index = _messages.indexWhere((message) => message.id == pending.message.id);
+    if (index >= 0) {
+      _messages[index] = _messages[index].copyWith(deliveryStatus: status);
+    }
+    _events.add(
+      MessageSendStatusChanged(messageId: pending.message.id, status: status),
+    );
+  }
+
+  void _markStored(_PendingSend pending) {
+    if (pending.stored) return;
+    pending.stored = true;
+    pending.cancelTimeout();
+    _setPendingStatus(pending, MessageDeliveryStatus.stored);
+    _pendingSends.remove(pending.message.id);
+    _pendingStoredOrder.remove(pending);
+    _pendingByAprsMessageId.removeWhere((_, value) => identical(value, pending));
   }
 
   void _mergeSessionMessages(Iterable<InternetMessage> incoming) {
@@ -282,10 +326,7 @@ final class AprsMessagesTransport
   Future<void> markConversationRead({
     required String remoteCallsign,
     required String token,
-  }) async {
-    // Read receipts do not have an APRS Core operation yet. The controller still
-    // clears its local unread badge when the conversation is opened.
-  }
+  }) async {}
 
   @override
   Future<InternetMessage> send({
@@ -293,49 +334,103 @@ final class AprsMessagesTransport
     required String remoteCallsign,
     required String text,
     required String token,
-  }) {
-    final result = Completer<InternetMessage>();
-    _operationTail = _operationTail.then((_) async {
-      try {
-        result.complete(await _sendOne(remoteCallsign, text));
-      } on Object catch (error, stackTrace) {
-        result.completeError(error, stackTrace);
-      }
-    });
-    return result.future;
-  }
-
-  Future<InternetMessage> _sendOne(String remoteCallsign, String text) async {
+  }) async {
     if (_closed || !_serverReachable) {
       throw StateError('APRS OpenQSP session is not available');
     }
     final recipient = remoteCallsign.trim().toUpperCase();
     final createdAt = DateTime.now().toUtc();
-    final request = OpenQspSendMessage(
-      createdAt: createdAt.millisecondsSinceEpoch ~/ 1000,
-      recipient: recipient,
-      body: text,
-    );
-
-    final stored = Completer<void>();
-    _storedResponse = stored;
-    try {
-      await _sendObject(request);
-      await stored.future.timeout(responseTimeout);
-    } finally {
-      if (identical(_storedResponse, stored)) _storedResponse = null;
-    }
-
     final message = InternetMessage(
       id: 'aprs-local-${createdAt.microsecondsSinceEpoch}-${_localSequence++}',
-      from: callsign,
+      from: this.callsign,
       to: recipient,
       body: text,
       createdAt: createdAt,
-      deliveryStatus: MessageDeliveryStatus.stored,
+      deliveryStatus: MessageDeliveryStatus.processing,
+    );
+    final pending = _PendingSend(
+      message: message,
+      request: OpenQspSendMessage(
+        createdAt: createdAt.millisecondsSinceEpoch ~/ 1000,
+        recipient: recipient,
+        body: text,
+      ),
     );
     _messages.add(message);
+    _pendingSends[message.id] = pending;
+    _pendingStoredOrder.add(pending);
+    _enqueuePendingSend(pending);
     return message;
+  }
+
+  @override
+  Future<void> retryMessage(String messageId) async {
+    final pending = _pendingSends[messageId];
+    if (pending == null || pending.stored) return;
+    _setPendingStatus(pending, MessageDeliveryStatus.processing);
+    _enqueuePendingSend(pending);
+  }
+
+  void _enqueuePendingSend(_PendingSend pending) {
+    _operationTail = _operationTail.then((_) async {
+      if (_closed || pending.stored) return;
+      try {
+        await _transmitPending(pending);
+      } on Object {
+        _setPendingStatus(pending, MessageDeliveryStatus.retry);
+        pending.cancelTimeout();
+      }
+    });
+  }
+
+  Future<void> _transmitPending(_PendingSend pending) async {
+    if (!_serverReachable) {
+      throw StateError('APRS OpenQSP session is not available');
+    }
+    final call = _tnc.sourceCallsign;
+    if (call == null || !_tnc.kissReady) {
+      throw StateError('TNC is not connected');
+    }
+    _setPendingStatus(pending, MessageDeliveryStatus.processing);
+    final core = _codec.encode(pending.request);
+    final transactionId = _transactionIdFactory();
+    final fragments = fragmentFrame(core, transactionId);
+    pending.hasBeenTransmitted = true;
+    for (final fragment in fragments) {
+      final messageId = _allocateAprsMessageId();
+      _pendingByAprsMessageId[messageId] = pending;
+      final information = _messageEncoder.encode(
+        addressee: openQspAprsAddressee,
+        body: fragment.body,
+        messageId: messageId,
+      );
+      final ax25 = _ax25Encoder.encodeUi(
+        destination: const Ax25Address(
+          callsign: openQspAprsTocall,
+          ssid: 0,
+          hasBeenRepeated: false,
+          isLast: false,
+        ),
+        source: Ax25Address(
+          callsign: call,
+          ssid: _tnc.aprsSsid,
+          hasBeenRepeated: false,
+          isLast: true,
+        ),
+        information: information,
+      );
+      await _tnc.sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
+    }
+    pending.touch(responseTimeout, () => _timeoutPending(pending));
+  }
+
+  String _allocateAprsMessageId() {
+    for (var attempt = 0; attempt < 36 * 36; attempt++) {
+      final value = _nextAprsMessageId++ % (36 * 36);
+      final candidate = value.toRadixString(36).toUpperCase().padLeft(2, '0');
+      if (!_pendingByAprsMessageId.containsKey(candidate)) return candidate;
+    }
+    throw StateError('APRS message ID space exhausted');
   }
 
   Future<void> _sendObject(OpenQspFrameObject object) async {
@@ -397,10 +492,12 @@ final class AprsMessagesTransport
       session.removeListener(_onSessionChanged);
       _tnc.removeListener(_onTncChanged);
     }
-    final stored = _storedResponse;
-    if (stored != null && !stored.isCompleted) {
-      stored.completeError(StateError('APRS messages transport closed'));
+    for (final pending in _pendingSends.values) {
+      pending.cancelTimeout();
     }
+    _pendingSends.clear();
+    _pendingByAprsMessageId.clear();
+    _pendingStoredOrder.clear();
     final sync = _pendingSync;
     sync?.cancelTimeout();
     if (sync != null && !sync.completer.isCompleted) {
@@ -408,6 +505,29 @@ final class AprsMessagesTransport
     }
     await _events.close();
     await _connections.close();
+  }
+}
+
+final class _PendingSend {
+  _PendingSend({required this.message, required this.request})
+    : status = message.deliveryStatus;
+
+  final InternetMessage message;
+  final OpenQspSendMessage request;
+  MessageDeliveryStatus status;
+  Timer? _timeout;
+  bool hasBeenTransmitted = false;
+  bool stored = false;
+
+  void touch(Duration timeout, void Function() onTimeout) {
+    if (stored) return;
+    _timeout?.cancel();
+    _timeout = Timer(timeout, onTimeout);
+  }
+
+  void cancelTimeout() {
+    _timeout?.cancel();
+    _timeout = null;
   }
 }
 
