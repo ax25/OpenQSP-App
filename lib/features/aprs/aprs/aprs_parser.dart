@@ -121,33 +121,33 @@ final class AprsParser {
     if (bytes.isEmpty ||
         bytes.length > 512 ||
         bytes.any((byte) => !_printable(byte))) {
-      return AprsInvalid(outerFrame, reason: 'invalid third-party packet');
+      return _invalidThirdParty(outerFrame, 'invalid third-party packet');
     }
 
     final text = String.fromCharCodes(bytes);
     final informationSeparator = text.indexOf(':');
     if (informationSeparator <= 0 || informationSeparator == text.length - 1) {
-      return AprsInvalid(outerFrame, reason: 'invalid third-party packet');
+      return _invalidThirdParty(outerFrame, 'invalid third-party packet');
     }
 
     final header = text.substring(0, informationSeparator);
     final information = text.substring(informationSeparator + 1);
     final sourceSeparator = header.indexOf('>');
     if (sourceSeparator <= 0 || sourceSeparator != header.lastIndexOf('>')) {
-      return AprsInvalid(outerFrame, reason: 'invalid third-party header');
+      return _invalidThirdParty(outerFrame, 'invalid third-party header');
     }
 
     final sourceText = header.substring(0, sourceSeparator);
     final route = header.substring(sourceSeparator + 1);
     final routeParts = route.split(',');
     if (routeParts.isEmpty || routeParts.any((part) => part.isEmpty)) {
-      return AprsInvalid(outerFrame, reason: 'invalid third-party route');
+      return _invalidThirdParty(outerFrame, 'invalid third-party route');
     }
 
     final source = _parseAddress(sourceText);
     final destination = _parseAddress(routeParts.first);
     if (source == null || destination == null) {
-      return AprsInvalid(outerFrame, reason: 'invalid third-party address');
+      return _invalidThirdParty(outerFrame, 'invalid third-party address');
     }
 
     final logicalFrame = Ax25Frame(
@@ -163,7 +163,19 @@ final class AprsParser {
           allowThirdParty: false,
           igate: outerFrame.source,
         ) ??
-        AprsInvalid(outerFrame, reason: 'invalid third-party payload');
+        _invalidThirdParty(outerFrame, 'invalid third-party payload');
+  }
+
+  static AprsInvalid _invalidThirdParty(Ax25Frame frame, String reason) {
+    final info = frame.informationText;
+    final hex = frame.information
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
+        .join(' ');
+    return AprsInvalid(
+      frame,
+      reason:
+          '$reason; SRC=${frame.source}; DST=${frame.destination}; INFO=$info; HEX=$hex',
+    );
   }
 
   static Ax25Address? _parseAddress(String value) {
