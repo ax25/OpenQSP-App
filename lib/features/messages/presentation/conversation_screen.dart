@@ -222,7 +222,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
                                     ),
                                     if (sent) ...[
                                       const SizedBox(width: 3),
-                                      _MessageStatusIcon(message: message),
+                                      _MessageStatusIcon(
+                                        message: message,
+                                        controller: widget.controller,
+                                      ),
                                     ],
                                   ],
                                 ),
@@ -274,29 +277,60 @@ class _ConversationScreenState extends State<ConversationScreen> {
 }
 
 class _MessageStatusIcon extends StatelessWidget {
-  const _MessageStatusIcon({required this.message});
+  const _MessageStatusIcon({
+    required this.message,
+    required this.controller,
+  });
 
   final InternetMessage message;
+  final MessagesController controller;
 
   @override
   Widget build(BuildContext context) {
-    final (label, color) = switch (message.deliveryStatus) {
-      MessageDeliveryStatus.stored => ('Stored on server', Colors.grey),
-      MessageDeliveryStatus.delivered =>
-        ('Delivered to recipient', Colors.green),
-      MessageDeliveryStatus.read => ('Read by recipient', Colors.blue),
-    };
-    return Tooltip(
-      message: label,
-      child: Semantics(
-        label: label,
-        child: Icon(
-          Icons.check,
-          key: Key('status-${message.id}'),
-          size: 16,
-          color: color,
-        ),
-      ),
-    );
+    switch (message.deliveryStatus) {
+      case MessageDeliveryStatus.processing:
+        return const Tooltip(
+          message: 'Waiting for server confirmation',
+          child: SizedBox.square(
+            dimension: 14,
+            child: CircularProgressIndicator(
+              key: Key('status-processing'),
+              strokeWidth: 1.8,
+            ),
+          ),
+        );
+      case MessageDeliveryStatus.retry:
+        return Tooltip(
+          message: 'No confirmation received. Tap to retry',
+          child: InkResponse(
+            key: Key('retry-${message.id}'),
+            onTap: () => controller.retryMessage(message.id),
+            radius: 14,
+            child: const Padding(
+              padding: EdgeInsets.all(1),
+              child: Icon(Icons.refresh, size: 16),
+            ),
+          ),
+        );
+      case MessageDeliveryStatus.stored:
+        return _check('Stored on server', Colors.grey);
+      case MessageDeliveryStatus.delivered:
+        return _check('Delivered to recipient', Colors.green);
+      case MessageDeliveryStatus.read:
+        return _check('Read by recipient', Colors.blue);
+    }
   }
+
+  Widget _check(String label, Color color) => Tooltip(
+    message: label,
+    child: Semantics(
+      label: label,
+      child: Icon(
+        Icons.check,
+        key: Key('status-${message.id}'),
+        size: 16,
+        color: color,
+      ),
+    ),
+  );
 }
