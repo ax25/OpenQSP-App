@@ -78,8 +78,10 @@ final class AprsSessionController extends ChangeNotifier {
     return '${minutes}m ${seconds}s';
   }
 
-  String get detailLabel =>
-      'IGate ${lastIgate ?? '--'} · $activityLabel · RX $lastServerRxAgeLabel ago';
+  String get detailLabel {
+    final age = lastServerRx == null ? '--' : '${lastServerRxAgeLabel} ago';
+    return 'IGate ${lastIgate ?? '--'} · $activityLabel · RX $age';
+  }
 
   void setActivity(AprsActivityState value) {
     if (_activityState == value) return;
