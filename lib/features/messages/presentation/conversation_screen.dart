@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../application/messages_controller.dart';
 import '../domain/message_models.dart';
 import 'message_date_format.dart';
+import 'pending_message_composer.dart';
 
 class ConversationScreen extends StatefulWidget {
   const ConversationScreen({
@@ -23,7 +24,6 @@ class _ConversationScreenState extends State<ConversationScreen> {
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
   bool _loading = true;
-  bool _sending = false;
   String? _error;
   int _messageCount = 0;
 
@@ -31,6 +31,12 @@ class _ConversationScreenState extends State<ConversationScreen> {
   void initState() {
     super.initState();
     widget.controller.addListener(_changed);
+    pendingMessageComposer.addListener(_pendingComposerChanged);
+    final pendingText = pendingMessageComposer.textFor(
+      widget.controller,
+      widget.remoteCallsign,
+    );
+    if (pendingText.isNotEmpty) _composer.text = pendingText;
     _load();
   }
 
@@ -55,6 +61,25 @@ class _ConversationScreenState extends State<ConversationScreen> {
     if (hasNewMessage) _scrollToLatest();
   }
 
+  void _pendingComposerChanged() {
+    if (!mounted) return;
+    final text = pendingMessageComposer.textFor(
+      widget.controller,
+      widget.remoteCallsign,
+    );
+    final sending = pendingMessageComposer.isSending(
+      widget.controller,
+      widget.remoteCallsign,
+    );
+    if (_composer.text != text && (text.isNotEmpty || !sending)) {
+      _composer.value = TextEditingValue(
+        text: text,
+        selection: TextSelection.collapsed(offset: text.length),
+      );
+    }
+    setState(() {});
+  }
+
   void _scrollToLatest() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
@@ -68,27 +93,32 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   Future<void> _send() async {
     final text = _composer.text.trim();
-    if (_sending || text.isEmpty || text.length > maximumMessageLength) return;
-    setState(() {
-      _sending = true;
-      _error = null;
-    });
+    final sending = pendingMessageComposer.isSending(
+      widget.controller,
+      widget.remoteCallsign,
+    );
+    if (sending || text.isEmpty || text.length > maximumMessageLength) return;
+    setState(() => _error = null);
     try {
-      await widget.controller.send(widget.remoteCallsign, text);
-      _composer.clear();
+      await pendingMessageComposer.send(
+        controller: widget.controller,
+        remoteCallsign: widget.remoteCallsign,
+        text: text,
+      );
+      if (!mounted) return;
       _composerFocus.requestFocus();
       _scrollToLatest();
     } on Object catch (error) {
-      _error = 'Message could not be sent: $error';
+      if (!mounted) return;
+      setState(() => _error = 'Message could not be sent: $error');
       _composerFocus.requestFocus();
-    } finally {
-      if (mounted) setState(() => _sending = false);
     }
   }
 
   @override
   void dispose() {
     widget.controller.removeListener(_changed);
+    pendingMessageComposer.removeListener(_pendingComposerChanged);
     _composer.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
@@ -98,6 +128,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
   @override
   Widget build(BuildContext context) {
     final messages = widget.controller.historyFor(widget.remoteCallsign);
+    final sending = pendingMessageComposer.isSending(
+      widget.controller,
+      widget.remoteCallsign,
+    );
     return Scaffold(
       appBar: AppBar(title: Text(widget.remoteCallsign)),
       body: Column(children: [
@@ -114,89 +148,92 @@ class _ConversationScreenState extends State<ConversationScreen> {
               : messages.isEmpty
               ? const Center(child: Text('No messages yet'))
               : ListView.builder(
-            key: const Key('messageList'),
-            controller: _scrollController,
-            padding: const EdgeInsets.all(12),
-            itemCount: messages.length,
-            itemBuilder: (_, index) {
-              final message = messages[index];
-              final sent =
-                  message.directionFor(widget.controller.callsign) ==
-                  MessageDirection.sent;
-              final showDate = index == 0 ||
-                  !messagesAreOnSameLocalDay(
-                    messages[index - 1].createdAt,
-                    message.createdAt,
-                  );
-              final colors = Theme.of(context).colorScheme;
-              return Column(
-                children: [
-                  if (showDate)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                      child: Text(
-                        formatMessageDateSeparator(message.createdAt),
-                        key: Key('date-${message.id}'),
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  Align(
-                    key: Key('message-${message.id}'),
-                    alignment: sent
-                        ? Alignment.centerRight
-                        : Alignment.centerLeft,
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                  key: const Key('messageList'),
+                  controller: _scrollController,
+                  padding: const EdgeInsets.all(12),
+                  itemCount: messages.length,
+                  itemBuilder: (_, index) {
+                    final message = messages[index];
+                    final sent =
+                        message.directionFor(widget.controller.callsign) ==
+                        MessageDirection.sent;
+                    final showDate = index == 0 ||
+                        !messagesAreOnSameLocalDay(
+                          messages[index - 1].createdAt,
+                          message.createdAt,
+                        );
+                    final colors = Theme.of(context).colorScheme;
+                    return Column(
                       children: [
-                        Flexible(
-                          child: Card(
-                            color: sent
-                                ? colors.surfaceContainerHighest
-                                : colors.primaryContainer,
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 10,
-                              ),
-                              child: Text(
-                                message.body,
-                                style: TextStyle(
-                                  color: sent
-                                      ? colors.onSurfaceVariant
-                                      : colors.onPrimaryContainer,
-                                ),
-                              ),
+                        if (showDate)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                            child: Text(
+                              formatMessageDateSeparator(message.createdAt),
+                              key: Key('date-${message.id}'),
+                              style: Theme.of(context).textTheme.labelSmall
+                                  ?.copyWith(color: colors.onSurfaceVariant),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 4),
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
+                        Align(
+                          key: Key('message-${message.id}'),
+                          alignment: sent
+                              ? Alignment.centerRight
+                              : Alignment.centerLeft,
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(
-                                formatMessageTime(message.createdAt),
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(color: colors.onSurfaceVariant),
+                              Flexible(
+                                child: Card(
+                                  color: sent
+                                      ? colors.surfaceContainerHighest
+                                      : colors.primaryContainer,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
+                                    child: Text(
+                                      message.body,
+                                      style: TextStyle(
+                                        color: sent
+                                            ? colors.onSurfaceVariant
+                                            : colors.onPrimaryContainer,
+                                      ),
+                                    ),
+                                  ),
+                                ),
                               ),
-                              if (sent) ...[
-                                const SizedBox(width: 3),
-                                _MessageStatusIcon(message: message),
-                              ],
+                              const SizedBox(width: 4),
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      formatMessageTime(message.createdAt),
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .labelSmall
+                                          ?.copyWith(
+                                            color: colors.onSurfaceVariant,
+                                          ),
+                                    ),
+                                    if (sent) ...[
+                                      const SizedBox(width: 3),
+                                      _MessageStatusIcon(message: message),
+                                    ],
+                                  ],
+                                ),
+                              ),
                             ],
                           ),
                         ),
                       ],
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+                    );
+                  },
+                ),
         ),
         SafeArea(
           top: false,
@@ -208,6 +245,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   key: const Key('messageComposer'),
                   controller: _composer,
                   focusNode: _composerFocus,
+                  readOnly: sending,
                   maxLength: maximumMessageLength,
                   inputFormatters: [
                     LengthLimitingTextInputFormatter(maximumMessageLength),
@@ -219,8 +257,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
               const SizedBox(width: 8),
               IconButton(
                 key: const Key('sendMessage'),
-                onPressed: _sending ? null : _send,
-                icon: _sending
+                onPressed: sending ? null : _send,
+                icon: sending
                     ? const SizedBox.square(
                         dimension: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
@@ -244,7 +282,8 @@ class _MessageStatusIcon extends StatelessWidget {
   Widget build(BuildContext context) {
     final (label, color) = switch (message.deliveryStatus) {
       MessageDeliveryStatus.stored => ('Stored on server', Colors.grey),
-      MessageDeliveryStatus.delivered => ('Delivered to recipient', Colors.green),
+      MessageDeliveryStatus.delivered =>
+        ('Delivered to recipient', Colors.green),
       MessageDeliveryStatus.read => ('Read by recipient', Colors.blue),
     };
     return Tooltip(
