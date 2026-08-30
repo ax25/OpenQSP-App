@@ -25,7 +25,7 @@ final class AprsMessagesTransport
   AprsMessagesTransport({
     required this.session,
     required String callsign,
-    this.responseTimeout = const Duration(seconds: 30),
+    this.responseTimeout = const Duration(seconds: 65),
     String Function()? transactionIdFactory,
   }) : callsign = callsign.trim().toUpperCase(),
        _transactionIdFactory = transactionIdFactory ?? _randomTransactionId;
