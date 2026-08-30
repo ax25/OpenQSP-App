@@ -79,8 +79,6 @@ void main() {
     tnc.openQspCheckState = OpenQspCheckState.available;
     session = AprsSessionController(tncController: tnc);
     await session.activate();
-    // activate() starts a capabilities probe; tests only need the operational
-    // state and inject their own logical responses below.
     tnc.openQspCheckState = OpenQspCheckState.available;
     transport = AprsMessagesTransport(
       session: session,
@@ -100,23 +98,70 @@ void main() {
     await service.losses.close();
   });
 
-  test('send waits for STORED and writes an OpenQSP APRS request', () async {
-    final pending = transport.send(
+  test('send returns processing immediately and later STORED advances it', () async {
+    final storedEvent = transport.events
+        .where(
+          (value) =>
+              value is MessageSendStatusChanged &&
+              value.status == MessageDeliveryStatus.stored,
+        )
+        .cast<MessageSendStatusChanged>()
+        .first;
+
+    final message = await transport.send(
       callsign: 'EA3GNU',
       remoteCallsign: 'EA3ABC',
       text: 'hola por radio',
       token: '',
     );
-    await Future<void>.delayed(Duration.zero);
 
-    expect(service.sentBytes, isNotEmpty);
-    _injectObject(service, const OpenQspStored(), transactionId: '001');
-
-    final message = await pending;
     expect(message.from, 'EA3GNU');
     expect(message.to, 'EA3ABC');
     expect(message.body, 'hola por radio');
-    expect(message.deliveryStatus, MessageDeliveryStatus.stored);
+    expect(message.deliveryStatus, MessageDeliveryStatus.processing);
+
+    await Future<void>.delayed(Duration.zero);
+    expect(service.sentBytes, isNotEmpty);
+    _injectObject(service, const OpenQspStored(), transactionId: '001');
+
+    final update = await storedEvent;
+    expect(update.messageId, message.id);
+    final history = await transport.messages(callsign: 'EA3GNU', token: '');
+    expect(history.single.deliveryStatus, MessageDeliveryStatus.stored);
+  });
+
+  test('late APRS ACK restarts processing after timeout', () async {
+    final fastTransport = AprsMessagesTransport(
+      session: session,
+      callsign: 'EA3GNU',
+      responseTimeout: const Duration(milliseconds: 50),
+      transactionIdFactory: () => 'XYZ',
+    );
+    await fastTransport.connect(callsign: 'EA3GNU', token: '');
+    addTearDown(fastTransport.close);
+
+    final statuses = <MessageDeliveryStatus>[];
+    final subscription = fastTransport.events
+        .where((event) => event is MessageSendStatusChanged)
+        .cast<MessageSendStatusChanged>()
+        .listen((event) => statuses.add(event.status));
+    addTearDown(subscription.cancel);
+
+    final message = await fastTransport.send(
+      callsign: 'EA3GNU',
+      remoteCallsign: 'EA3ABC',
+      text: 'late ack',
+      token: '',
+    );
+    expect(message.deliveryStatus, MessageDeliveryStatus.processing);
+
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(statuses, contains(MessageDeliveryStatus.retry));
+
+    _injectAck(service, messageId: '00');
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(statuses.last, MessageDeliveryStatus.processing);
   });
 
   test('unsolicited MESSAGE becomes a realtime received event', () async {
@@ -315,6 +360,34 @@ void main() {
 
     expect(states, [RealtimeConnectionState.connected]);
   });
+}
+
+void _injectAck(_FakeTncService service, {required String messageId}) {
+  const messageEncoder = AprsMessageEncoder();
+  const ax25Encoder = Ax25Encoder();
+  const kissEncoder = KissEncoder();
+  final information = messageEncoder.encode(
+    addressee: 'EA3GNU',
+    body: 'ack$messageId',
+  );
+  final ax25 = ax25Encoder.encodeUi(
+    destination: const Ax25Address(
+      callsign: 'APOQSP',
+      ssid: 0,
+      hasBeenRepeated: false,
+      isLast: false,
+    ),
+    source: const Ax25Address(
+      callsign: 'OQSP',
+      ssid: 0,
+      hasBeenRepeated: false,
+      isLast: true,
+    ),
+    information: information,
+  );
+  service.bytes.add(
+    kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
+  );
 }
 
 void _injectObject(
