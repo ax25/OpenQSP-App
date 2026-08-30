@@ -96,7 +96,8 @@ class TncSettingsController extends ChangeNotifier {
   Timer? _openQspCountdownTimer;
   DateTime? _openQspCheckDeadline;
   final OpenQspAprsReassembler _reassembler = OpenQspAprsReassembler();
-  final Map<String, DateTime> _completedOpenQspTransactions = {};
+  final Map<String, _CompletedOpenQspTransaction>
+  _completedOpenQspTransactions = {};
   static const OpenQspCodec _openQspCodec = OpenQspCodec();
   static const Ax25Encoder _ax25Encoder = Ax25Encoder();
   static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
@@ -230,22 +231,34 @@ class TncSettingsController extends ChangeNotifier {
       openQspFragmentsRx++;
       final now = DateTime.now().toUtc();
       _completedOpenQspTransactions.removeWhere(
-        (_, completedAt) => now.difference(completedAt) >= openQspAprsDefaultTtl,
+        (_, completed) =>
+            now.difference(completed.completedAt) >= openQspAprsDefaultTtl,
       );
       final transactionKey =
           '${message.frame.source}|${fragment.transactionId}';
-      if (_completedOpenQspTransactions.containsKey(transactionKey)) return;
       final bytes = _reassembler.add(
         peer: message.frame.source.toString(),
         fragment: fragment,
         now: now,
       );
       if (bytes == null) return;
+
+      // Q1 transaction IDs are bounded and may legitimately be reused by the
+      // server after the earlier transaction has left its outbound queue. Only
+      // suppress an exact completed payload; a different payload with the same
+      // source + transaction ID is a new logical response and must be decoded.
+      final completed = _completedOpenQspTransactions[transactionKey];
+      if (completed != null && listEquals(completed.bytes, bytes)) return;
+
       final decoded = _openQspCodec.decode(bytes);
       openQspFramesRx++;
       lastOpenQspObject = decoded.object;
       lastValidOpenQspRx = now;
-      _completedOpenQspTransactions[transactionKey] = now;
+      _completedOpenQspTransactions[transactionKey] =
+          _CompletedOpenQspTransaction(
+            completedAt: now,
+            bytes: List<int>.unmodifiable(bytes),
+          );
       if (decoded.object is OpenQspCapabilities &&
           openQspCheckState == OpenQspCheckState.waiting) {
         _finishOpenQspCheck(OpenQspCheckState.available);
@@ -526,4 +539,14 @@ class TncSettingsController extends ChangeNotifier {
     unawaited(service.disconnect());
     super.dispose();
   }
+}
+
+final class _CompletedOpenQspTransaction {
+  const _CompletedOpenQspTransaction({
+    required this.completedAt,
+    required this.bytes,
+  });
+
+  final DateTime completedAt;
+  final List<int> bytes;
 }
