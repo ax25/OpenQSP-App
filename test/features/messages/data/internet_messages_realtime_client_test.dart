@@ -138,7 +138,7 @@ class FakeChannel implements WebSocketChannel {
   FakeChannel({this.readyError});
 
   final Object? readyError;
-  final _controller = StreamController<dynamic>();
+  final _controller = StreamController<dynamic>.broadcast();
   late final FakeSink _sink = FakeSink(_controller);
   int? _closeCode;
 
@@ -156,9 +156,8 @@ class FakeChannel implements WebSocketChannel {
   @override
   String? get protocol => null;
   @override
-  Future<void> get ready => readyError == null
-      ? Future.value()
-      : Future<void>.error(readyError!);
+  Future<void> get ready =>
+      readyError == null ? Future.value() : Future<void>.error(readyError!);
   @override
   WebSocketSink get sink => _sink;
   @override
