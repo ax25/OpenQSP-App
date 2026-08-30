@@ -57,6 +57,10 @@ final class AprsMessagesTransport
 
   TncSettingsController get _tnc => session.tncController;
 
+  bool get _serverReachable =>
+      session.state == AprsSessionState.available ||
+      session.state == AprsSessionState.slow;
+
   @override
   String get syncCursorKey => 'aprs';
 
@@ -80,7 +84,7 @@ final class AprsMessagesTransport
       _tnc.addListener(_onTncChanged);
     }
     _emitConnectionState();
-    if (session.state != AprsSessionState.available) {
+    if (!_serverReachable) {
       throw StateError('APRS OpenQSP session is not available');
     }
   }
@@ -90,7 +94,8 @@ final class AprsMessagesTransport
   void _emitConnectionState() {
     if (_closed) return;
     final state = switch (session.state) {
-      AprsSessionState.available => RealtimeConnectionState.connected,
+      AprsSessionState.available || AprsSessionState.slow =>
+        RealtimeConnectionState.connected,
       AprsSessionState.connecting => RealtimeConnectionState.reconnecting,
       AprsSessionState.inactive || AprsSessionState.unavailable =>
         RealtimeConnectionState.disconnected,
@@ -247,7 +252,7 @@ final class AprsMessagesTransport
   }
 
   Future<SyncBatch> _syncOne(String? cursor) async {
-    if (_closed || session.state != AprsSessionState.available) {
+    if (_closed || !_serverReachable) {
       throw StateError('APRS OpenQSP session is not available');
     }
     final since = cursor == null ? 0 : int.tryParse(cursor);
@@ -300,7 +305,7 @@ final class AprsMessagesTransport
   }
 
   Future<InternetMessage> _sendOne(String remoteCallsign, String text) async {
-    if (_closed || session.state != AprsSessionState.available) {
+    if (_closed || !_serverReachable) {
       throw StateError('APRS OpenQSP session is not available');
     }
     final recipient = remoteCallsign.trim().toUpperCase();
