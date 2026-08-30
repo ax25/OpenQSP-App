@@ -1,6 +1,6 @@
 enum MessageDirection { sent, received }
 
-enum MessageDeliveryStatus { stored, delivered, read }
+enum MessageDeliveryStatus { processing, retry, stored, delivered, read }
 
 const int maximumMessageLength = 208;
 
@@ -76,6 +76,8 @@ class InternetMessage {
   }
 
   static MessageDeliveryStatus _parseDeliveryStatus(String? value) => switch (value) {
+    'processing' => MessageDeliveryStatus.processing,
+    'retry' => MessageDeliveryStatus.retry,
     null || 'stored' => MessageDeliveryStatus.stored,
     'delivered' => MessageDeliveryStatus.delivered,
     'read' => MessageDeliveryStatus.read,
@@ -124,11 +126,6 @@ class MessageReceived extends MessagingEvent {
   const MessageReceived(this.message, {this.syncCursor});
 
   final InternetMessage message;
-
-  /// Optional transport cursor that becomes safe to persist once [message]
-  /// itself has been durably stored locally. APRS uses this for progressive
-  /// ordered sync so an interrupted page can resume after the last complete
-  /// message instead of retransmitting the whole page.
   final String? syncCursor;
 }
 
@@ -142,6 +139,16 @@ class MessageRead extends MessagingEvent {
   const MessageRead({required this.peer, required this.lastReadMessageId});
   final String peer;
   final String lastReadMessageId;
+}
+
+class MessageSendStatusChanged extends MessagingEvent {
+  const MessageSendStatusChanged({
+    required this.messageId,
+    required this.status,
+  });
+
+  final String messageId;
+  final MessageDeliveryStatus status;
 }
 
 enum RealtimeConnectionState {

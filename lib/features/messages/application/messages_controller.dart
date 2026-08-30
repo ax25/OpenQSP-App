@@ -183,10 +183,7 @@ class MessagesController extends ChangeNotifier {
       _unreadByPeer[normalized] = 0;
       _rebuildConversations();
       notifyListeners();
-    } on Object {
-      // Local history remains available. A future transport sync/read operation
-      // can retry the server-side read cursor.
-    }
+    } on Object {}
   }
 
   void closeConversation() => openRemoteCallsign = null;
@@ -210,6 +207,31 @@ class MessagesController extends ChangeNotifier {
     await localStore.upsert(callsign, message);
     _merge(message);
     notifyListeners();
+  }
+
+  Future<void> retryMessage(String messageId) async {
+    final retryable = repository;
+    if (retryable is! RetryableMessagesRepository) return;
+    final current = _messagesById[messageId];
+    if (current == null || current.deliveryStatus != MessageDeliveryStatus.retry) {
+      return;
+    }
+    final updated = current.copyWith(
+      deliveryStatus: MessageDeliveryStatus.processing,
+    );
+    _messagesById[messageId] = updated;
+    await localStore.upsert(callsign, updated);
+    _rebuildConversations();
+    notifyListeners();
+    try {
+      await (retryable as RetryableMessagesRepository).retryMessage(messageId);
+    } on Object {
+      final failed = updated.copyWith(deliveryStatus: MessageDeliveryStatus.retry);
+      _messagesById[messageId] = failed;
+      await localStore.upsert(callsign, failed);
+      _rebuildConversations();
+      notifyListeners();
+    }
   }
 
   Future<void> _applyEvent(MessagingEvent event) async {
@@ -244,6 +266,24 @@ class MessagesController extends ChangeNotifier {
         }
       case MessageRead(:final peer, :final lastReadMessageId):
         await _applyReadCursor(_key(peer), lastReadMessageId);
+      case MessageSendStatusChanged(:final messageId, :final status):
+        final current = _messagesById[messageId];
+        if (current != null &&
+            _statusRank(status) >= _statusRank(current.deliveryStatus)) {
+          final updated = current.copyWith(deliveryStatus: status);
+          _messagesById[messageId] = updated;
+          await localStore.upsert(callsign, updated);
+          _rebuildConversations();
+        } else if (current != null &&
+            (status == MessageDeliveryStatus.processing ||
+                status == MessageDeliveryStatus.retry) &&
+            (current.deliveryStatus == MessageDeliveryStatus.processing ||
+                current.deliveryStatus == MessageDeliveryStatus.retry)) {
+          final updated = current.copyWith(deliveryStatus: status);
+          _messagesById[messageId] = updated;
+          await localStore.upsert(callsign, updated);
+          _rebuildConversations();
+        }
     }
     notifyListeners();
   }
@@ -254,9 +294,7 @@ class MessagesController extends ChangeNotifier {
       _unreadByPeer[peer] = 0;
       _rebuildConversations();
       notifyListeners();
-    } on Object {
-      // A later transport sync/open can retry the durable read update.
-    }
+    } on Object {}
   }
 
   Future<void> _applyReadCursor(String peer, String lastReadMessageId) async {
@@ -334,9 +372,10 @@ class MessagesController extends ChangeNotifier {
           second.createdAt.millisecondsSinceEpoch ~/ 1000;
 
   int _statusRank(MessageDeliveryStatus status) => switch (status) {
-    MessageDeliveryStatus.stored => 0,
-    MessageDeliveryStatus.delivered => 1,
-    MessageDeliveryStatus.read => 2,
+    MessageDeliveryStatus.processing || MessageDeliveryStatus.retry => 0,
+    MessageDeliveryStatus.stored => 1,
+    MessageDeliveryStatus.delivered => 2,
+    MessageDeliveryStatus.read => 3,
   };
 
   void _rebuildConversations() {

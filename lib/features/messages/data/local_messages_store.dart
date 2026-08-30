@@ -13,12 +13,6 @@ abstract interface class LocalMessagesStore {
   Future<void> setCursor(String callsign, String transport, String value);
 }
 
-/// Cross-platform persistent message cache backed by the preferences plugin.
-///
-/// The storage interface deliberately hides this implementation detail so a
-/// database-backed store can replace it later without changing controllers or
-/// transports. Writes are serialized to avoid losing concurrent websocket/APRS
-/// updates.
 final class PreferencesLocalMessagesStore implements LocalMessagesStore {
   PreferencesLocalMessagesStore({Future<SharedPreferences>? preferences})
     : _preferences = preferences ?? SharedPreferences.getInstance();
@@ -41,10 +35,7 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
       upsertAll(callsign, [message]);
 
   @override
-  Future<void> upsertAll(
-    String callsign,
-    Iterable<InternetMessage> messages,
-  ) {
+  Future<void> upsertAll(String callsign, Iterable<InternetMessage> messages) {
     final additions = List<InternetMessage>.of(messages);
     if (additions.isEmpty) return _writeTail;
     return _enqueue(() async {
@@ -75,21 +66,13 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
     final storedCursor = cursors[transport];
     if (transport != 'aprs') return storedCursor;
 
-    // APRS cursors can lag behind complete canonical messages that were
-    // persisted before the cursor write completed. Recover the largest
-    // contiguous mailbox prefix (1..N) and use whichever safe point is newer.
-    // Never use the highest visible sequence directly: a gap means the missing
-    // message must still be requested over APRS.
     final storedMessages = _decodeMessages(
       preferences.getString(_messagesKey(normalizedCallsign)),
     );
     final sequences = <int>{};
     for (final message in storedMessages) {
       if (_normalize(message.to) != normalizedCallsign) continue;
-      final sequence = _canonicalMailboxSequence(
-        message.id,
-        normalizedCallsign,
-      );
+      final sequence = _canonicalMailboxSequence(message.id, normalizedCallsign);
       if (sequence != null) sequences.add(sequence);
     }
     var contiguous = 0;
@@ -108,18 +91,15 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
   }
 
   @override
-  Future<void> setCursor(
-    String callsign,
-    String transport,
-    String value,
-  ) => _enqueue(() async {
-    final preferences = await _preferences;
-    final cursors = _decodeCursors(
-      preferences.getString(_cursorsKey(callsign)),
-    );
-    cursors[transport] = value;
-    await preferences.setString(_cursorsKey(callsign), jsonEncode(cursors));
-  });
+  Future<void> setCursor(String callsign, String transport, String value) =>
+      _enqueue(() async {
+        final preferences = await _preferences;
+        final cursors = _decodeCursors(
+          preferences.getString(_cursorsKey(callsign)),
+        );
+        cursors[transport] = value;
+        await preferences.setString(_cursorsKey(callsign), jsonEncode(cursors));
+      });
 
   Future<void> _enqueue(Future<void> Function() operation) {
     final result = Completer<void>();
@@ -233,8 +213,9 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
           second.createdAt.millisecondsSinceEpoch ~/ 1000;
 
   static int _statusRank(MessageDeliveryStatus status) => switch (status) {
-    MessageDeliveryStatus.stored => 0,
-    MessageDeliveryStatus.delivered => 1,
-    MessageDeliveryStatus.read => 2,
+    MessageDeliveryStatus.processing || MessageDeliveryStatus.retry => 0,
+    MessageDeliveryStatus.stored => 1,
+    MessageDeliveryStatus.delivered => 2,
+    MessageDeliveryStatus.read => 3,
   };
 }
