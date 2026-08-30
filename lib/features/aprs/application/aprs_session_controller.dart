@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/openqsp_protocol/openqsp_models.dart';
+import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../domain/tnc_connection_state.dart';
 import 'tnc_settings_controller.dart';
 
@@ -30,6 +32,7 @@ final class AprsSessionController extends ChangeNotifier {
   bool _disposed = false;
   Timer? _ageTimer;
   AprsActivityState _activityState = AprsActivityState.idle;
+  OpenQspFrameObject? _lastObservedObject;
 
   bool get active => _active;
   AprsActivityState get activityState => _activityState;
@@ -102,6 +105,7 @@ final class AprsSessionController extends ChangeNotifier {
   Future<void> activate() async {
     _active = true;
     _activityState = AprsActivityState.idle;
+    _lastObservedObject = tncController.lastOpenQspObject;
     _startAgeTimer();
     _notify();
 
@@ -128,13 +132,31 @@ final class AprsSessionController extends ChangeNotifier {
   Future<void> deactivate() async {
     _active = false;
     _activityState = AprsActivityState.idle;
+    _lastObservedObject = null;
     _stopAgeTimer();
     _notify();
     await tncController.disconnect();
     _notify();
   }
 
-  void _onTncChanged() => _notify();
+  void _onTncChanged() {
+    final object = tncController.lastOpenQspObject;
+    if (object != null && !identical(object, _lastObservedObject)) {
+      _lastObservedObject = object;
+      switch (object) {
+        case OpenQspMessage():
+          _activityState = AprsActivityState.newMessageReceived;
+        case OpenQspEnd(:final requestOperation, :final returnedCount)
+            when requestOperation == OpenQspOperation.getNewMessages:
+          _activityState = returnedCount == 0
+              ? AprsActivityState.noNewMessages
+              : AprsActivityState.newMessageReceived;
+        default:
+          break;
+      }
+    }
+    _notify();
+  }
 
   void _notify() {
     if (!_disposed) notifyListeners();
