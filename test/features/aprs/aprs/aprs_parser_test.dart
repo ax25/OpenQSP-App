@@ -43,6 +43,7 @@ void main() {
       expect(message.text, 'HELLO');
       expect(message.messageId, isNull);
       expect(message.isForOpenQsp, isTrue);
+      expect(message.igate, isNull);
       expect(message.frame.source.toString(), 'EA3GNU-5');
       expect(message.frame.information, ':OQSP     :HELLO'.codeUnits);
     });
@@ -86,6 +87,7 @@ void main() {
       final message = packet! as AprsTextMessage;
       expect(message.frame.source.toString(), 'OQSP');
       expect(message.frame.destination.toString(), 'APOQSP');
+      expect(message.igate.toString(), 'OQSPK-1');
       expect(message.addressee, 'EA3GNU-5');
       expect(message.text, 'Q1:ABC:00/01:AUYABQEAAAAP');
       expect(message.messageId, '00');

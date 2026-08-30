@@ -25,7 +25,7 @@ final class AprsMessagesTransport
   AprsMessagesTransport({
     required this.session,
     required String callsign,
-    this.responseTimeout = const Duration(seconds: 30),
+    this.responseTimeout = const Duration(seconds: 65),
     String Function()? transactionIdFactory,
   }) : callsign = callsign.trim().toUpperCase(),
        _transactionIdFactory = transactionIdFactory ?? _randomTransactionId;
@@ -110,7 +110,11 @@ final class AprsMessagesTransport
     final fragmentCount = _tnc.openQspFragmentsRx;
     if (fragmentCount != _lastObservedOpenQspFragments) {
       _lastObservedOpenQspFragments = fragmentCount;
-      _pendingSync?.touch(responseTimeout);
+      final pending = _pendingSync;
+      pending?.touch(responseTimeout);
+      if (pending != null) {
+        session.setActivity(AprsActivityState.gettingNewMessages);
+      }
     }
 
     final object = _tnc.lastOpenQspObject;
@@ -147,6 +151,7 @@ final class AprsMessagesTransport
 
         final isNew = _messages.every((existing) => existing.id != message.id);
         if (isNew) _messages.add(message);
+        session.setActivity(AprsActivityState.newMessageReceived);
 
         // During an ordered GET_NEW_MESSAGES response, emit the message even if
         // it was already known to this transport whenever it advances the sync
@@ -160,10 +165,16 @@ final class AprsMessagesTransport
         }
       case OpenQspEnd(
         :final requestOperation,
+        :final returnedCount,
         :final nextSince,
         :final hasMore,
       ):
         if (requestOperation == OpenQspOperation.getNewMessages) {
+          session.setActivity(
+            returnedCount == 0
+                ? AprsActivityState.noNewMessages
+                : AprsActivityState.newMessageReceived,
+          );
           final pending = _pendingSync;
           if (pending != null && !pending.completer.isCompleted) {
             _mergeSessionMessages(pending.messages);
@@ -240,12 +251,18 @@ final class AprsMessagesTransport
     final pending = _PendingSync(since);
     _pendingSync = pending;
     pending.touch(responseTimeout);
+    session.setActivity(AprsActivityState.askingForNewMessages);
     try {
-      await _sendObject(OpenQspGetNewMessages(since: since, max: 20));
+      await _sendObject(OpenQspGetNewMessages(since: since, max: 8));
       return await pending.completer.future;
     } finally {
       pending.cancelTimeout();
       if (identical(_pendingSync, pending)) _pendingSync = null;
+      if (!pending.completer.isCompleted &&
+          (session.activityState == AprsActivityState.askingForNewMessages ||
+              session.activityState == AprsActivityState.gettingNewMessages)) {
+        session.setActivity(AprsActivityState.idle);
+      }
     }
   }
 

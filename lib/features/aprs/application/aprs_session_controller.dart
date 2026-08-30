@@ -2,10 +2,20 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/openqsp_protocol/openqsp_models.dart';
+import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../domain/tnc_connection_state.dart';
 import 'tnc_settings_controller.dart';
 
 enum AprsSessionState { inactive, connecting, available, unavailable }
+
+enum AprsActivityState {
+  idle,
+  askingForNewMessages,
+  gettingNewMessages,
+  newMessageReceived,
+  noNewMessages,
+}
 
 /// Owns the operational APRS mode independently from any presentation screen.
 ///
@@ -20,8 +30,14 @@ final class AprsSessionController extends ChangeNotifier {
   final TncSettingsController tncController;
   bool _active = false;
   bool _disposed = false;
+  Timer? _ageTimer;
+  AprsActivityState _activityState = AprsActivityState.idle;
+  OpenQspFrameObject? _lastObservedObject;
 
   bool get active => _active;
+  AprsActivityState get activityState => _activityState;
+  String? get lastIgate => tncController.lastOpenQspIgate;
+  DateTime? get lastServerRx => tncController.lastValidOpenQspRx;
 
   AprsSessionState get state {
     if (!_active) return AprsSessionState.inactive;
@@ -39,13 +55,58 @@ final class AprsSessionController extends ChangeNotifier {
 
   String get statusLabel => switch (state) {
     AprsSessionState.inactive => 'APRS inactive',
-    AprsSessionState.connecting => 'Connecting APRS...',
+    AprsSessionState.connecting =>
+      tncController.openQspCheckState == OpenQspCheckState.waiting
+          ? 'Connecting APRS... ${tncController.openQspCheckRemainingSeconds}s'
+          : 'Connecting APRS...',
     AprsSessionState.available => 'APRS Server Available',
     AprsSessionState.unavailable => 'APRS Server Unavailable',
   };
 
+  String get activityLabel => switch (_activityState) {
+    AprsActivityState.idle => 'Idle',
+    AprsActivityState.askingForNewMessages => 'Asking for new messages',
+    AprsActivityState.gettingNewMessages => 'Getting new messages',
+    AprsActivityState.newMessageReceived => 'New message received',
+    AprsActivityState.noNewMessages => 'No new messages',
+  };
+
+  String get lastServerRxAgeLabel {
+    final value = lastServerRx;
+    if (value == null) return '--';
+    final age = DateTime.now().toUtc().difference(value);
+    if (age.inSeconds < 60) return '${age.inSeconds}s';
+    final minutes = age.inMinutes;
+    final seconds = age.inSeconds.remainder(60);
+    return '${minutes}m ${seconds}s';
+  }
+
+  String get detailLabel {
+    final age = lastServerRx == null ? '--' : '${lastServerRxAgeLabel} ago';
+    return 'IGate ${lastIgate ?? '--'} · $activityLabel · RX $age';
+  }
+
+  void setActivity(AprsActivityState value) {
+    if (_activityState == value) return;
+    _activityState = value;
+    _notify();
+  }
+
+  void _startAgeTimer() {
+    _ageTimer?.cancel();
+    _ageTimer = Timer.periodic(const Duration(seconds: 1), (_) => _notify());
+  }
+
+  void _stopAgeTimer() {
+    _ageTimer?.cancel();
+    _ageTimer = null;
+  }
+
   Future<void> activate() async {
     _active = true;
+    _activityState = AprsActivityState.idle;
+    _lastObservedObject = tncController.lastOpenQspObject;
+    _startAgeTimer();
     _notify();
 
     await tncController.initialize();
@@ -70,12 +131,32 @@ final class AprsSessionController extends ChangeNotifier {
 
   Future<void> deactivate() async {
     _active = false;
+    _activityState = AprsActivityState.idle;
+    _lastObservedObject = null;
+    _stopAgeTimer();
     _notify();
     await tncController.disconnect();
     _notify();
   }
 
-  void _onTncChanged() => _notify();
+  void _onTncChanged() {
+    final object = tncController.lastOpenQspObject;
+    if (object != null && !identical(object, _lastObservedObject)) {
+      _lastObservedObject = object;
+      switch (object) {
+        case OpenQspMessage():
+          _activityState = AprsActivityState.newMessageReceived;
+        case OpenQspEnd(:final requestOperation, :final returnedCount)
+            when requestOperation == OpenQspOperation.getNewMessages:
+          _activityState = returnedCount == 0
+              ? AprsActivityState.noNewMessages
+              : AprsActivityState.newMessageReceived;
+        default:
+          break;
+      }
+    }
+    _notify();
+  }
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -85,6 +166,7 @@ final class AprsSessionController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _stopAgeTimer();
     tncController.removeListener(_onTncChanged);
     super.dispose();
   }
