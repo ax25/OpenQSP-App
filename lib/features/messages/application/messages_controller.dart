@@ -224,7 +224,7 @@ class MessagesController extends ChangeNotifier {
     _rebuildConversations();
     notifyListeners();
     try {
-      await retryable.retryMessage(messageId);
+      await (retryable as RetryableMessagesRepository).retryMessage(messageId);
     } on Object {
       final failed = updated.copyWith(deliveryStatus: MessageDeliveryStatus.retry);
       _messagesById[messageId] = failed;
