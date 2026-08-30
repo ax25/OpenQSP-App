@@ -117,10 +117,22 @@ final class AprsParser {
     );
   }
 
-  AprsPacket _parseThirdParty(Ax25Frame outerFrame, List<int> bytes) {
-    if (bytes.isEmpty ||
-        bytes.length > 512 ||
-        bytes.any((byte) => !_printable(byte))) {
+  AprsPacket _parseThirdParty(Ax25Frame outerFrame, List<int> rawBytes) {
+    if (rawBytes.isEmpty || rawBytes.length > 512) {
+      return _invalidThirdParty(outerFrame, 'invalid third-party packet');
+    }
+
+    // Some RF IGates append a CR/LF transport terminator to a third-party
+    // payload before forwarding it over AX.25. Those terminators are not part
+    // of the embedded APRS packet and must not make an otherwise valid packet
+    // fail the printable-byte validation. Only strip CR/LF from the very end;
+    // embedded control bytes remain invalid.
+    var end = rawBytes.length;
+    while (end > 0 && (rawBytes[end - 1] == 0x0d || rawBytes[end - 1] == 0x0a)) {
+      end--;
+    }
+    final bytes = rawBytes.sublist(0, end);
+    if (bytes.isEmpty || bytes.any((byte) => !_printable(byte))) {
       return _invalidThirdParty(outerFrame, 'invalid third-party packet');
     }
 
