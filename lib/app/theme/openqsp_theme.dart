@@ -8,6 +8,7 @@ abstract final class OpenQspColors {
   static const brand = Color(0xFF245E66);
   static const border = Color(0xFFCBD1D5);
   static const positive = Color(0xFF39724D);
+  static const warning = Color(0xFFB7791F);
 }
 
 abstract final class OpenQspTheme {
