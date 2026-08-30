@@ -562,28 +562,46 @@ class _TransportStatus extends StatelessWidget {
               : () => unawaited(session.retry()),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Row(
+            child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(
-                  positive ? Icons.circle : Icons.circle_outlined,
-                  size: 11,
-                  color: positive
-                      ? OpenQspColors.positive
-                      : OpenQspColors.secondaryText,
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      positive ? Icons.circle : Icons.circle_outlined,
+                      size: 11,
+                      color: positive
+                          ? OpenQspColors.positive
+                          : OpenQspColors.secondaryText,
+                    ),
+                    const SizedBox(width: 9),
+                    Text(
+                      session.statusLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: positive
+                            ? OpenQspColors.positive
+                            : OpenQspColors.secondaryText,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 9),
-                Text(
-                  session.statusLabel,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: positive
-                        ? OpenQspColors.positive
-                        : OpenQspColors.secondaryText,
-                    fontWeight: FontWeight.w600,
+                if (positive) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    session.detailLabel,
+                    key: const Key('aprsStatusDetail'),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: OpenQspColors.secondaryText,
+                      fontSize: 11,
+                    ),
                   ),
-                ),
+                ],
               ],
             ),
           ),
