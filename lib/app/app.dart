@@ -44,8 +44,10 @@ class OpenQspApp extends StatefulWidget {
 class _OpenQspAppState extends State<OpenQspApp> {
   late final CallsignStore _store;
   late final AuthSession _authSession;
+  StreamSubscription<String>? _authenticationRequiredSubscription;
   String? _callsign;
   bool _loading = true;
+  bool _reauthenticating = false;
   TncSettingsController? _tncController;
   AprsSessionController? _aprsSession;
   final _navigatorKey = GlobalKey<NavigatorState>();
@@ -57,6 +59,9 @@ class _OpenQspAppState extends State<OpenQspApp> {
     _authSession = AuthSession(
       client: widget.authClient,
       tokenStore: widget.authTokenStore ?? SecureAuthTokenStore(),
+    );
+    _authenticationRequiredSubscription = _authSession.authenticationRequired.listen(
+      (callsign) => unawaited(_reauthenticate(callsign)),
     );
     _loadCallsign();
   }
@@ -100,8 +105,108 @@ class _OpenQspAppState extends State<OpenQspApp> {
     setState(() => _callsign = callsign);
   }
 
+  Future<void> _reauthenticate(String callsign) async {
+    if (_reauthenticating || !mounted || _callsign?.toUpperCase() != callsign) {
+      return;
+    }
+    _reauthenticating = true;
+    try {
+      final navigator = _navigatorKey.currentState;
+      navigator?.popUntil((route) => route.isFirst);
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted) return;
+
+      String? error;
+      while (mounted) {
+        final password = await _showPasswordDialog(callsign, error: error);
+        if (password == null || !mounted) return;
+        final result = await _authSession.login(callsign, password);
+        if (!mounted) return;
+        if (result is LoginSuccess) return;
+
+        final failure = (result as LoginError).failure;
+        if (failure == LoginFailure.incorrectPassword) {
+          error = 'Incorrect password';
+          continue;
+        }
+        final context = _navigatorKey.currentContext;
+        if (context != null) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(
+                  failure == LoginFailure.network
+                      ? 'Server unavailable'
+                      : 'Unable to connect to server',
+                ),
+              ),
+            );
+        }
+        return;
+      }
+    } finally {
+      _reauthenticating = false;
+    }
+  }
+
+  Future<String?> _showPasswordDialog(String callsign, {String? error}) async {
+    final context = _navigatorKey.currentContext;
+    if (context == null) return null;
+    final controller = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Connect to server'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Password for $callsign'),
+              const SizedBox(height: 12),
+              TextField(
+                key: const Key('serverPasswordField'),
+                controller: controller,
+                obscureText: true,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  errorText: error,
+                ),
+                onSubmitted: (value) {
+                  if (value.isNotEmpty) Navigator.pop(dialogContext, value);
+                },
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const Key('connectButton'),
+              onPressed: () {
+                if (controller.text.isNotEmpty) {
+                  Navigator.pop(dialogContext, controller.text);
+                }
+              },
+              child: const Text('Connect'),
+            ),
+          ],
+        ),
+      );
+    } finally {
+      controller.dispose();
+    }
+  }
+
   @override
   void dispose() {
+    unawaited(_authenticationRequiredSubscription?.cancel());
+    unawaited(_authSession.close());
     _aprsSession?.dispose();
     _tncController?.dispose();
     widget.serverStatusClient.close();

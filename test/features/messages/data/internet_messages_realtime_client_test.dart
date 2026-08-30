@@ -59,8 +59,10 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(events, hasLength(3));
-    expect((events[0] as MessageReceived).message.deliveryStatus,
-        MessageDeliveryStatus.stored);
+    expect(
+      (events[0] as MessageReceived).message.deliveryStatus,
+      MessageDeliveryStatus.stored,
+    );
     expect((events[1] as MessageDelivered).messageId, 'server-id');
     expect((events[2] as MessageRead).lastReadMessageId, 'server-id');
 
@@ -104,9 +106,38 @@ void main() {
     expect(connections, 1);
     await client.close();
   });
+
+  test('HTTP 403 handshake reports auth required and never reconnects', () async {
+    var connections = 0;
+    final client = InternetMessagesRealtimeClient(
+      baseUri: Uri.parse('http://server.example'),
+      reconnectDelays: const [Duration(milliseconds: 1)],
+      connector: (_) {
+        connections++;
+        return FakeChannel(
+          readyError: Exception(
+            'WebSocketException: Connection was not upgraded, HTTP status code: 403 Forbidden',
+          ),
+        );
+      },
+    );
+    final states = <RealtimeConnectionState>[];
+    final subscription = client.connectionStates.listen(states.add);
+
+    await client.connect(callsign: 'EA3GNU', token: 'expired');
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+
+    expect(states, contains(RealtimeConnectionState.authenticationRequired));
+    expect(connections, 1);
+    await subscription.cancel();
+    await client.close();
+  });
 }
 
 class FakeChannel implements WebSocketChannel {
+  FakeChannel({this.readyError});
+
+  final Object? readyError;
   final _controller = StreamController<dynamic>();
   late final FakeSink _sink = FakeSink(_controller);
   int? _closeCode;
@@ -125,7 +156,9 @@ class FakeChannel implements WebSocketChannel {
   @override
   String? get protocol => null;
   @override
-  Future<void> get ready => Future.value();
+  Future<void> get ready => readyError == null
+      ? Future.value()
+      : Future<void>.error(readyError!);
   @override
   WebSocketSink get sink => _sink;
   @override

@@ -76,9 +76,31 @@ class InternetMessagesRealtimeClient implements MessagesRealtimeClient {
         onDone: () => _onDone(channel),
         cancelOnError: true,
       );
-    } on Object {
-      _scheduleReconnect();
+    } on Object catch (error) {
+      if (_isAuthenticationHandshakeFailure(error)) {
+        _requireAuthentication();
+      } else {
+        _scheduleReconnect();
+      }
     }
+  }
+
+  bool _isAuthenticationHandshakeFailure(Object error) {
+    final description = error.toString().toLowerCase();
+    final mentions403 = description.contains('403');
+    final mentionsHandshakeStatus =
+        description.contains('forbidden') ||
+        description.contains('status code') ||
+        description.contains('http status');
+    return mentions403 && mentionsHandshakeStatus;
+  }
+
+  void _requireAuthentication() {
+    if (_closed || _token == null) return;
+    _token = null;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+    _states.add(RealtimeConnectionState.authenticationRequired);
   }
 
   void _onData(Object? raw) {
@@ -128,8 +150,7 @@ class InternetMessagesRealtimeClient implements MessagesRealtimeClient {
 
   void _onDone(WebSocketChannel channel) {
     if (channel.closeCode == 4401) {
-      _token = null;
-      _states.add(RealtimeConnectionState.authenticationRequired);
+      _requireAuthentication();
       return;
     }
     _onDisconnected();
