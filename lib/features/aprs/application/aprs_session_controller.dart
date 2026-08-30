@@ -39,7 +39,10 @@ final class AprsSessionController extends ChangeNotifier {
 
   String get statusLabel => switch (state) {
     AprsSessionState.inactive => 'APRS inactive',
-    AprsSessionState.connecting => 'Connecting APRS...',
+    AprsSessionState.connecting =>
+      tncController.openQspCheckState == OpenQspCheckState.waiting
+          ? 'Connecting APRS... ${tncController.openQspCheckRemainingSeconds}s'
+          : 'Connecting APRS...',
     AprsSessionState.available => 'APRS Server Available',
     AprsSessionState.unavailable => 'APRS Server Unavailable',
   };
