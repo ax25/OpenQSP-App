@@ -96,8 +96,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _onMessagesTap() async {
     if (_aprsActive) {
       final session = widget.aprsSession;
-      if (session == null || session.state != AprsSessionState.available) {
-        _showMessage('APRS Server Unavailable');
+      if (session == null || !session.serverReachable) {
+        _showMessage(session?.statusLabel ?? 'APRS Server Unavailable');
         return;
       }
       _openAprsMessages(session);
@@ -553,7 +553,13 @@ class _TransportStatus extends StatelessWidget {
         if (!session.active) {
           return _Status(state: internetState, onRetry: onInternetRetry);
         }
-        final positive = session.state == AprsSessionState.available;
+        final reachable = session.serverReachable;
+        final slow = session.state == AprsSessionState.slow;
+        final statusColor = slow
+            ? OpenQspColors.warning
+            : reachable
+            ? OpenQspColors.positive
+            : OpenQspColors.secondaryText;
         return InkWell(
           key: const Key('aprsStatusRetry'),
           borderRadius: BorderRadius.circular(16),
@@ -569,11 +575,9 @@ class _TransportStatus extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      positive ? Icons.circle : Icons.circle_outlined,
+                      reachable ? Icons.circle : Icons.circle_outlined,
                       size: 11,
-                      color: positive
-                          ? OpenQspColors.positive
-                          : OpenQspColors.secondaryText,
+                      color: statusColor,
                     ),
                     const SizedBox(width: 9),
                     Text(
@@ -581,15 +585,13 @@ class _TransportStatus extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: positive
-                            ? OpenQspColors.positive
-                            : OpenQspColors.secondaryText,
+                        color: statusColor,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
                 ),
-                if (positive) ...[
+                if (reachable) ...[
                   const SizedBox(height: 2),
                   Text(
                     session.detailLabel,
