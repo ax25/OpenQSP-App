@@ -93,6 +93,40 @@ void main() {
       expect(message.messageId, '00');
     });
 
+    test('accepts CR/LF terminators appended by an RF IGate', () {
+      const igate = Ax25Address(
+        callsign: 'F4GCF',
+        ssid: 3,
+        hasBeenRepeated: false,
+        isLast: true,
+      );
+      final bytes = [
+        ...'}OQSP>APOQSP,TCPIP*,qAC,F4GCF-3::EA3GNU   :Q1:00S:00/01:AUYABQEAAAAP{10'
+            .codeUnits,
+        0x0d,
+        0x0a,
+      ];
+
+      final packet = parser.parse(frame(bytes, frameSource: igate));
+
+      expect(packet, isA<AprsTextMessage>());
+      final message = packet! as AprsTextMessage;
+      expect(message.frame.source.toString(), 'OQSP');
+      expect(message.igate.toString(), 'F4GCF-3');
+      expect(message.addressee, 'EA3GNU');
+      expect(message.text, 'Q1:00S:00/01:AUYABQEAAAAP');
+      expect(message.messageId, '10');
+    });
+
+    test('still rejects embedded control bytes in third-party payloads', () {
+      final bytes = [
+        ...'}OQSP>APOQSP::EA3GNU   :HEL'.codeUnits,
+        0x0d,
+        ...'LO'.codeUnits,
+      ];
+      expect(parser.parse(frame(bytes)), isA<AprsInvalid>());
+    });
+
     test('rejects malformed and nested third-party packets without throwing', () {
       for (final text in [
         '}',

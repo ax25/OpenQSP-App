@@ -46,7 +46,7 @@ final class AprsMessagesTransport
   final List<InternetMessage> _messages = [];
   Future<void> _operationTail = Future<void>.value();
   Future<SyncBatch>? _syncInFlight;
-  OpenQspFrameObject? _lastObservedObject;
+  int _lastObservedOpenQspFrameCount = 0;
   int _lastObservedOpenQspFragments = 0;
   RealtimeConnectionState? _lastEmittedConnectionState;
   Completer<void>? _storedResponse;
@@ -74,7 +74,7 @@ final class AprsMessagesTransport
     }
     if (!_connected) {
       _connected = true;
-      _lastObservedObject = _tnc.lastOpenQspObject;
+      _lastObservedOpenQspFrameCount = _tnc.openQspFramesRx;
       _lastObservedOpenQspFragments = _tnc.openQspFragmentsRx;
       session.addListener(_onSessionChanged);
       _tnc.addListener(_onTncChanged);
@@ -117,9 +117,15 @@ final class AprsMessagesTransport
       }
     }
 
+    // A Core object is an event, not an identity token. Some responses such as
+    // STORED are const canonical instances, so two distinct received frames can
+    // legitimately expose the exact same Dart object instance. Observe the
+    // monotonically increasing completed-frame counter instead.
+    final frameCount = _tnc.openQspFramesRx;
+    if (frameCount == _lastObservedOpenQspFrameCount) return;
+    _lastObservedOpenQspFrameCount = frameCount;
     final object = _tnc.lastOpenQspObject;
-    if (object == null || identical(object, _lastObservedObject)) return;
-    _lastObservedObject = object;
+    if (object == null) return;
 
     switch (object) {
       case OpenQspStored():
@@ -418,9 +424,7 @@ final class _PendingSync {
     _timeout?.cancel();
     _timeout = Timer(timeout, () {
       if (!completer.isCompleted) {
-        completer.completeError(
-          TimeoutException('APRS message sync inactive', timeout),
-        );
+        completer.completeError(TimeoutException('APRS OpenQSP response timed out'));
       }
     });
   }

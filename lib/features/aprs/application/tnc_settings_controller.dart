@@ -54,6 +54,10 @@ class TncSettingsController extends ChangeNotifier {
     });
   }
 
+  static const _ansiCyan = '\x1B[36m';
+  static const _ansiRed = '\x1B[31m';
+  static const _ansiReset = '\x1B[0m';
+
   final BluetoothTncStorage storage;
   final BluetoothTncService service;
   final String? sourceCallsign;
@@ -96,7 +100,8 @@ class TncSettingsController extends ChangeNotifier {
   Timer? _openQspCountdownTimer;
   DateTime? _openQspCheckDeadline;
   final OpenQspAprsReassembler _reassembler = OpenQspAprsReassembler();
-  final Map<String, DateTime> _completedOpenQspTransactions = {};
+  final Map<String, _CompletedOpenQspTransaction>
+  _completedOpenQspTransactions = {};
   static const OpenQspCodec _openQspCodec = OpenQspCodec();
   static const Ax25Encoder _ax25Encoder = Ax25Encoder();
   static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
@@ -106,6 +111,12 @@ class TncSettingsController extends ChangeNotifier {
   List<String> get ax25Activity => List.unmodifiable(_ax25Activity);
   List<String> get aprsActivity => List.unmodifiable(_aprsActivity);
   bool get kissReady => state == TncConnectionState.connected;
+
+  String? get _localAprsIdentity {
+    final call = sourceCallsign;
+    if (call == null) return null;
+    return aprsSsid == 0 ? call : '$call-$aprsSsid';
+  }
 
   Duration get openQspCheckRemaining {
     final deadline = _openQspCheckDeadline;
@@ -126,6 +137,22 @@ class TncSettingsController extends ChangeNotifier {
       .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
       .join(' ');
 
+  static void _debugColor(String message, String color) {
+    if (kDebugMode) debugPrint('$color$message$_ansiReset');
+  }
+
+  bool _isLocalAprsPacket(AprsPacket packet) {
+    final local = _localAprsIdentity;
+    if (local == null) return false;
+    if (packet.frame.source.toString() == local) return true;
+    return switch (packet) {
+      AprsTextMessage(:final addressee) => addressee == local,
+      AprsAck(:final addressee) => addressee == local,
+      AprsReject(:final addressee) => addressee == local,
+      AprsUnknown() || AprsInvalid() => false,
+    };
+  }
+
   void _decodeAx25(List<int> payload) {
     try {
       final frame = _ax25Decoder.decode(payload);
@@ -140,7 +167,7 @@ class TncSettingsController extends ChangeNotifier {
       }
     } on Ax25DecodeException catch (error) {
       ax25DecodeErrors++;
-      if (kDebugMode) debugPrint('AX.25 decode error: ${error.message}');
+      _debugColor('AX.25 decode error: ${error.message}', _ansiRed);
     }
   }
 
@@ -150,7 +177,7 @@ class TncSettingsController extends ChangeNotifier {
     rxAprsPackets++;
     if (packet is AprsInvalid) {
       aprsParseErrors++;
-      if (kDebugMode) debugPrint('APRS parse error: ${packet.reason}');
+      _debugColor(_aprsLog(packet), _ansiRed);
       return;
     }
     switch (packet) {
@@ -181,7 +208,11 @@ class TncSettingsController extends ChangeNotifier {
     }
     _aprsActivity.insert(0, _describeAprs(packet));
     if (_aprsActivity.length > 10) _aprsActivity.removeLast();
-    if (kDebugMode) debugPrint(_aprsLog(packet));
+    if (_isLocalAprsPacket(packet)) {
+      _debugColor(_aprsLog(packet), _ansiCyan);
+    } else if (kDebugMode) {
+      debugPrint(_aprsLog(packet));
+    }
   }
 
   Future<void> _sendAprsAck(String messageId) async {
@@ -209,7 +240,7 @@ class TncSettingsController extends ChangeNotifier {
       );
       await sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
     } on Object catch (error) {
-      if (kDebugMode) debugPrint('APRS ACK TX error: $error');
+      _debugColor('APRS ACK TX error: $error', _ansiRed);
     }
   }
 
@@ -230,29 +261,41 @@ class TncSettingsController extends ChangeNotifier {
       openQspFragmentsRx++;
       final now = DateTime.now().toUtc();
       _completedOpenQspTransactions.removeWhere(
-        (_, completedAt) => now.difference(completedAt) >= openQspAprsDefaultTtl,
+        (_, completed) =>
+            now.difference(completed.completedAt) >= openQspAprsDefaultTtl,
       );
       final transactionKey =
           '${message.frame.source}|${fragment.transactionId}';
-      if (_completedOpenQspTransactions.containsKey(transactionKey)) return;
       final bytes = _reassembler.add(
         peer: message.frame.source.toString(),
         fragment: fragment,
         now: now,
       );
       if (bytes == null) return;
+
+      // Q1 transaction IDs are bounded and may legitimately be reused by the
+      // server after the earlier transaction has left its outbound queue. Only
+      // suppress an exact completed payload; a different payload with the same
+      // source + transaction ID is a new logical response and must be decoded.
+      final completed = _completedOpenQspTransactions[transactionKey];
+      if (completed != null && listEquals(completed.bytes, bytes)) return;
+
       final decoded = _openQspCodec.decode(bytes);
       openQspFramesRx++;
       lastOpenQspObject = decoded.object;
       lastValidOpenQspRx = now;
-      _completedOpenQspTransactions[transactionKey] = now;
+      _completedOpenQspTransactions[transactionKey] =
+          _CompletedOpenQspTransaction(
+            completedAt: now,
+            bytes: List<int>.unmodifiable(bytes),
+          );
       if (decoded.object is OpenQspCapabilities &&
           openQspCheckState == OpenQspCheckState.waiting) {
         _finishOpenQspCheck(OpenQspCheckState.available);
       }
     } on Object catch (error) {
       openQspErrors++;
-      if (kDebugMode) debugPrint('OpenQSP APRS RX error: $error');
+      _debugColor('OpenQSP APRS RX error: $error', _ansiRed);
     }
   }
 
@@ -343,7 +386,7 @@ class TncSettingsController extends ChangeNotifier {
         }
         unawaited(
           _sendCapabilitiesRequest(call, fragments).catchError((Object error) {
-            if (kDebugMode) debugPrint('OpenQSP APRS retry TX error: $error');
+            _debugColor('OpenQSP APRS retry TX error: $error', _ansiRed);
           }),
         );
       });
@@ -357,7 +400,7 @@ class TncSettingsController extends ChangeNotifier {
       });
     } on Object catch (error) {
       _finishOpenQspCheck(OpenQspCheckState.error);
-      if (kDebugMode) debugPrint('OpenQSP APRS TX error: $error');
+      _debugColor('OpenQSP APRS TX error: $error', _ansiRed);
     }
   }
 
@@ -412,6 +455,17 @@ class TncSettingsController extends ChangeNotifier {
     txKissFrames++;
     _activity.insert(0, 'TX  ${_hex(const KissEncoder().encode(frame))}');
     if (_activity.length > 10) _activity.removeLast();
+    if (kDebugMode && frame.port == 0 && frame.command == 0) {
+      try {
+        final ax25 = _ax25Decoder.decode(frame.payload);
+        final aprs = _aprsParser.parse(ax25);
+        if (aprs != null) {
+          _debugColor('TX ${_aprsLog(aprs)}', _ansiCyan);
+        }
+      } on Object {
+        // TX diagnostics must never affect transport behavior.
+      }
+    }
     _notify();
   }
 
@@ -526,4 +580,14 @@ class TncSettingsController extends ChangeNotifier {
     unawaited(service.disconnect());
     super.dispose();
   }
+}
+
+final class _CompletedOpenQspTransaction {
+  const _CompletedOpenQspTransaction({
+    required this.completedAt,
+    required this.bytes,
+  });
+
+  final DateTime completedAt;
+  final List<int> bytes;
 }
