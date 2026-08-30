@@ -3,9 +3,13 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/features/aprs/application/aprs_session_controller.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
+import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
+import 'package:openqsp_app/features/aprs/ax25/ax25_encoder.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_service.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_storage.dart';
 import 'package:openqsp_app/features/aprs/domain/tnc_device.dart';
+import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
+import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
 
 const _device = TncDevice(id: '00:11:22:33:44:55', name: 'TNC');
 
@@ -55,6 +59,30 @@ final class _Service implements BluetoothTncService {
   @override
   Future<void> sendBytes(List<int> data) async {
     sentBytes.add(List<int>.from(data));
+  }
+
+  void receiveCapabilities() {
+    final ax25 = const Ax25Encoder().encodeUi(
+      destination: const Ax25Address(
+        callsign: 'APOQSP',
+        ssid: 0,
+        hasBeenRepeated: false,
+        isLast: false,
+      ),
+      source: const Ax25Address(
+        callsign: 'OQSP',
+        ssid: 0,
+        hasBeenRepeated: false,
+        isLast: true,
+      ),
+      information:
+          ':EA3GNU   :Q1:ABC:00/01:AUYABQEAAAAP{00'.codeUnits,
+    );
+    _incoming.add(
+      const KissEncoder().encode(
+        KissFrame(port: 0, command: 0, payload: ax25),
+      ),
+    );
   }
 }
 
@@ -120,6 +148,36 @@ void main() {
     expect(emptySession.active, isTrue);
     expect(service.connectCalls, 0);
     expect(emptySession.state, AprsSessionState.unavailable);
+  });
+
+  test('late CAPABILITIES recovers timed-out session as slow', () async {
+    session.dispose();
+    tnc.dispose();
+
+    tnc = TncSettingsController(
+      storage: _Storage(),
+      service: service,
+      sourceCallsign: 'EA3GNU',
+      openQspTimeout: const Duration(milliseconds: 5),
+      openQspRetryInterval: const Duration(milliseconds: 2),
+    );
+    session = AprsSessionController(
+      tncController: tnc,
+      slowResponseThreshold: const Duration(milliseconds: 1),
+    );
+
+    await session.activate();
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(session.state, AprsSessionState.notResponding);
+    expect(session.serverReachable, isFalse);
+
+    service.receiveCapabilities();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.state, AprsSessionState.slow);
+    expect(session.serverReachable, isTrue);
+    expect(session.statusLabel, 'APRS Server Connection Slow');
   });
 }
 
