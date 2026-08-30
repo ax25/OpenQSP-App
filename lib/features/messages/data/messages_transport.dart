@@ -22,6 +22,10 @@ abstract interface class MessagesRepository {
   Future<SyncBatch> sync({required String token, String? cursor});
 }
 
+abstract interface class RetryableMessagesRepository {
+  Future<void> retryMessage(String messageId);
+}
+
 /// Optional capability for repositories whose incremental cursor is not the
 /// Internet `/sync` cursor namespace.
 abstract interface class MessagesSyncCursorNamespace {
