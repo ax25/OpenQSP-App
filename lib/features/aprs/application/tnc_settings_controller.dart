@@ -30,7 +30,8 @@ class TncSettingsController extends ChangeNotifier {
     required this.storage,
     required this.service,
     this.sourceCallsign,
-    this.openQspTimeout = const Duration(seconds: 20),
+    this.openQspTimeout = const Duration(seconds: 65),
+    this.openQspRetryInterval = const Duration(seconds: 31),
   }) {
     _kissTransport = KissTransport(service);
     _byteSubscription = service.incomingBytes.listen((bytes) {
@@ -57,6 +58,7 @@ class TncSettingsController extends ChangeNotifier {
   final BluetoothTncService service;
   final String? sourceCallsign;
   final Duration openQspTimeout;
+  final Duration openQspRetryInterval;
   TncConnectionState state = TncConnectionState.loading;
   TncDevice? device;
   TncFailure? failure;
@@ -89,6 +91,9 @@ class TncSettingsController extends ChangeNotifier {
   OpenQspCheckState openQspCheckState = OpenQspCheckState.notChecked;
   int aprsSsid = 0;
   Timer? _openQspTimer;
+  Timer? _openQspRetryTimer;
+  Timer? _openQspCountdownTimer;
+  DateTime? _openQspCheckDeadline;
   final OpenQspAprsReassembler _reassembler = OpenQspAprsReassembler();
   final Map<String, DateTime> _completedOpenQspTransactions = {};
   static const OpenQspCodec _openQspCodec = OpenQspCodec();
@@ -100,6 +105,21 @@ class TncSettingsController extends ChangeNotifier {
   List<String> get ax25Activity => List.unmodifiable(_ax25Activity);
   List<String> get aprsActivity => List.unmodifiable(_aprsActivity);
   bool get kissReady => state == TncConnectionState.connected;
+
+  Duration get openQspCheckRemaining {
+    final deadline = _openQspCheckDeadline;
+    if (openQspCheckState != OpenQspCheckState.waiting || deadline == null) {
+      return Duration.zero;
+    }
+    final remaining = deadline.difference(DateTime.now());
+    return remaining.isNegative ? Duration.zero : remaining;
+  }
+
+  int get openQspCheckRemainingSeconds {
+    final milliseconds = openQspCheckRemaining.inMilliseconds;
+    if (milliseconds <= 0) return 0;
+    return (milliseconds / Duration.millisecondsPerSecond).ceil();
+  }
 
   static String _hex(Iterable<int> bytes) => bytes
       .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
@@ -223,8 +243,7 @@ class TncSettingsController extends ChangeNotifier {
       _completedOpenQspTransactions[transactionKey] = now;
       if (decoded.object is OpenQspCapabilities &&
           openQspCheckState == OpenQspCheckState.waiting) {
-        _openQspTimer?.cancel();
-        openQspCheckState = OpenQspCheckState.available;
+        _finishOpenQspCheck(OpenQspCheckState.available);
       }
     } on Object catch (error) {
       openQspErrors++;
@@ -241,16 +260,63 @@ class TncSettingsController extends ChangeNotifier {
     _notify();
   }
 
+  void _cancelOpenQspCheckTimers() {
+    _openQspTimer?.cancel();
+    _openQspTimer = null;
+    _openQspRetryTimer?.cancel();
+    _openQspRetryTimer = null;
+    _openQspCountdownTimer?.cancel();
+    _openQspCountdownTimer = null;
+  }
+
+  void _finishOpenQspCheck(OpenQspCheckState result) {
+    _cancelOpenQspCheckTimers();
+    _openQspCheckDeadline = null;
+    openQspCheckState = result;
+    _notify();
+  }
+
+  Future<void> _sendCapabilitiesRequest(
+    String call,
+    List<OpenQspAprsFragment> fragments,
+  ) async {
+    for (final fragment in fragments) {
+      final information = _messageEncoder.encode(
+        addressee: openQspAprsAddressee,
+        body: fragment.body,
+      );
+      final ax25 = _ax25Encoder.encodeUi(
+        destination: const Ax25Address(
+          callsign: openQspAprsTocall,
+          ssid: 0,
+          hasBeenRepeated: false,
+          isLast: false,
+        ),
+        source: Ax25Address(
+          callsign: call,
+          ssid: aprsSsid,
+          hasBeenRepeated: false,
+          isLast: true,
+        ),
+        information: information,
+      );
+      await sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
+    }
+  }
+
   Future<void> checkOpenQsp() async {
     if (!kissReady) return;
     final call = sourceCallsign;
     if (call == null || !RegExp(r'^[A-Z0-9]{1,6}$').hasMatch(call)) {
-      openQspCheckState = OpenQspCheckState.error;
-      _notify();
+      _finishOpenQspCheck(OpenQspCheckState.error);
       return;
     }
+
+    _cancelOpenQspCheckTimers();
     openQspCheckState = OpenQspCheckState.waiting;
+    _openQspCheckDeadline = DateTime.now().add(openQspTimeout);
     _notify();
+
     try {
       final core = _openQspCodec.encode(const OpenQspGetCapabilities());
       final transactionId = (_transactionSequence++ % 46656)
@@ -258,39 +324,33 @@ class TncSettingsController extends ChangeNotifier {
           .toUpperCase()
           .padLeft(3, '0');
       final fragments = fragmentFrame(core, transactionId);
-      for (final fragment in fragments) {
-        final information = _messageEncoder.encode(
-          addressee: openQspAprsAddressee,
-          body: fragment.body,
+
+      await _sendCapabilitiesRequest(call, fragments);
+      if (openQspCheckState != OpenQspCheckState.waiting) return;
+
+      _openQspRetryTimer = Timer.periodic(openQspRetryInterval, (timer) {
+        if (openQspCheckState != OpenQspCheckState.waiting ||
+            openQspCheckRemaining == Duration.zero) {
+          timer.cancel();
+          return;
+        }
+        unawaited(
+          _sendCapabilitiesRequest(call, fragments).catchError((Object error) {
+            if (kDebugMode) debugPrint('OpenQSP APRS retry TX error: $error');
+          }),
         );
-        final ax25 = _ax25Encoder.encodeUi(
-          destination: const Ax25Address(
-            callsign: openQspAprsTocall,
-            ssid: 0,
-            hasBeenRepeated: false,
-            isLast: false,
-          ),
-          source: Ax25Address(
-            callsign: call,
-            ssid: aprsSsid,
-            hasBeenRepeated: false,
-            isLast: true,
-          ),
-          information: information,
-        );
-        await sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
-      }
-      _openQspTimer?.cancel();
+      });
+      _openQspCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (openQspCheckState == OpenQspCheckState.waiting) _notify();
+      });
       _openQspTimer = Timer(openQspTimeout, () {
         if (openQspCheckState == OpenQspCheckState.waiting) {
-          openQspCheckState = OpenQspCheckState.noResponse;
-          _notify();
+          _finishOpenQspCheck(OpenQspCheckState.noResponse);
         }
       });
     } on Object catch (error) {
-      openQspCheckState = OpenQspCheckState.error;
+      _finishOpenQspCheck(OpenQspCheckState.error);
       if (kDebugMode) debugPrint('OpenQSP APRS TX error: $error');
-      _notify();
     }
   }
 
@@ -406,6 +466,9 @@ class TncSettingsController extends ChangeNotifier {
   }
 
   Future<void> disconnect() async {
+    _cancelOpenQspCheckTimers();
+    _openQspCheckDeadline = null;
+    openQspCheckState = OpenQspCheckState.notChecked;
     await service.disconnect();
     if (_disposed) return;
     if (state == TncConnectionState.connected ||
@@ -419,6 +482,9 @@ class TncSettingsController extends ChangeNotifier {
   }
 
   Future<void> forget() async {
+    _cancelOpenQspCheckTimers();
+    _openQspCheckDeadline = null;
+    openQspCheckState = OpenQspCheckState.notChecked;
     await service.disconnect();
     await storage.clear();
     device = null;
@@ -428,6 +494,9 @@ class TncSettingsController extends ChangeNotifier {
   }
 
   void _setError(TncFailure value) {
+    _cancelOpenQspCheckTimers();
+    _openQspCheckDeadline = null;
+    openQspCheckState = OpenQspCheckState.error;
     failure = value;
     state = TncConnectionState.error;
     _notify();
@@ -442,7 +511,7 @@ class TncSettingsController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    _openQspTimer?.cancel();
+    _cancelOpenQspCheckTimers();
     unawaited(_byteSubscription.cancel());
     unawaited(_frameSubscription.cancel());
     unawaited(_connectionLossSubscription.cancel());
