@@ -131,6 +131,9 @@ class InternetMessagesRepository
   }
 
   Map<String, dynamic> _decode(http.Response response) {
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw const MessagesAuthenticationException();
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw MessagesHttpException(response.statusCode);
     }
