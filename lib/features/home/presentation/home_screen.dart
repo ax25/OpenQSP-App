@@ -215,7 +215,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           controller: MessagesController(
             callsign: widget.callsign,
             token: widget.authSession.tokenFor(widget.callsign)!,
-            repository: widget.messagesRepository,
+            repository: SessionAwareMessagesRepository(
+              delegate: widget.messagesRepository,
+              onAuthenticationRequired: () =>
+                  widget.authSession.invalidate(widget.callsign),
+            ),
             realtime: widget.messagesRealtimeFactory(),
             onAuthenticationRequired: () =>
                 widget.authSession.invalidate(widget.callsign),
