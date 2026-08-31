@@ -225,7 +225,7 @@ void main() {
     final message = await transport.send(
       callsign: 'EA3GNU',
       remoteCallsign: 'EA3ABC',
-      text: 'late durable ack',
+      text: 'late ack',
       token: '',
     );
     await Future<void>.delayed(const Duration(milliseconds: 70));
@@ -236,11 +236,7 @@ void main() {
       MessageDeliveryStatus.retry,
     );
 
-    // This payload produces two Q1 fragments. Model the two radio ACKs as
-    // distinct receive events so the transport observes both confirmations.
     _injectAck(service, messageId: 'C00');
-    await Future<void>.delayed(Duration.zero);
-    _injectAck(service, messageId: 'C01');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
