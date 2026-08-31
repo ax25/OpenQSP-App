@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_codec.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_models.dart';
+import 'package:openqsp_app/features/aprs/aprs/aprs_message_encoder.dart';
 import 'package:openqsp_app/features/aprs/application/aprs_session_controller.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
@@ -10,6 +13,7 @@ import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_storage.dart';
 import 'package:openqsp_app/features/aprs/domain/tnc_device.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
+import 'package:openqsp_app/features/aprs/openqsp_carriage/openqsp_aprs_carriage.dart';
 
 const _device = TncDevice(id: '00:11:22:33:44:55', name: 'TNC');
 
@@ -62,14 +66,23 @@ final class _Service implements BluetoothTncService {
   }
 
   void receiveCapabilities({bool commitAck = false}) {
-    final mask = commitAck ? 0x1f : 0x0f;
-    final suffix = mask.toRadixString(16).toUpperCase().padLeft(8, '0');
-    // CAPABILITIES payload is fixed-size and the final four bytes are the mask.
-    final body = commitAck
-        ? ':EA3GNU   :Q1:ABC:00/01:AUYABQEAAAAf{00'
-        : ':EA3GNU   :Q1:ABC:00/01:AUYABQEAAAAP{00';
-    assert(suffix == (commitAck ? '0000001F' : '0000000F'));
-    final ax25 = const Ax25Encoder().encodeUi(
+    const codec = OpenQspCodec();
+    const messageEncoder = AprsMessageEncoder();
+    const ax25Encoder = Ax25Encoder();
+    const kissEncoder = KissEncoder();
+    final core = codec.encode(
+      OpenQspCapabilities(
+        protocolVersion: 1,
+        capabilities: commitAck ? 0x1f : 0x0f,
+      ),
+    );
+    final fragment = fragmentFrame(core, 'ABC').single;
+    final information = messageEncoder.encode(
+      addressee: 'EA3GNU',
+      body: fragment.body,
+      messageId: '00',
+    );
+    final ax25 = ax25Encoder.encodeUi(
       destination: const Ax25Address(
         callsign: 'APOQSP',
         ssid: 0,
@@ -82,12 +95,10 @@ final class _Service implements BluetoothTncService {
         hasBeenRepeated: false,
         isLast: true,
       ),
-      information: body.codeUnits,
+      information: information,
     );
     _incoming.add(
-      const KissEncoder().encode(
-        KissFrame(port: 0, command: 0, payload: ax25),
-      ),
+      kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
     );
   }
 }
