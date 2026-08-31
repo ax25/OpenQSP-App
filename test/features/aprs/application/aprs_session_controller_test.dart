@@ -61,7 +61,14 @@ final class _Service implements BluetoothTncService {
     sentBytes.add(List<int>.from(data));
   }
 
-  void receiveCapabilities() {
+  void receiveCapabilities({bool commitAck = false}) {
+    final mask = commitAck ? 0x1f : 0x0f;
+    final suffix = mask.toRadixString(16).toUpperCase().padLeft(8, '0');
+    // CAPABILITIES payload is fixed-size and the final four bytes are the mask.
+    final body = commitAck
+        ? ':EA3GNU   :Q1:ABC:00/01:AUYABQEAAAAf{00'
+        : ':EA3GNU   :Q1:ABC:00/01:AUYABQEAAAAP{00';
+    assert(suffix == (commitAck ? '0000001F' : '0000000F'));
     final ax25 = const Ax25Encoder().encodeUi(
       destination: const Ax25Address(
         callsign: 'APOQSP',
@@ -75,8 +82,7 @@ final class _Service implements BluetoothTncService {
         hasBeenRepeated: false,
         isLast: true,
       ),
-      information:
-          ':EA3GNU   :Q1:ABC:00/01:AUYABQEAAAAP{00'.codeUnits,
+      information: body.codeUnits,
     );
     _incoming.add(
       const KissEncoder().encode(
@@ -178,6 +184,16 @@ void main() {
     expect(session.state, AprsSessionState.slow);
     expect(session.serverReachable, isTrue);
     expect(session.statusLabel, 'APRS Server Connection Slow');
+  });
+
+  test('CAPABILITIES advertises APRS commit ACK support', () async {
+    await session.activate();
+    service.receiveCapabilities(commitAck: true);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.serverCapabilities, 0x1f);
+    expect(session.supportsAprsCommitAck, isTrue);
   });
 }
 
