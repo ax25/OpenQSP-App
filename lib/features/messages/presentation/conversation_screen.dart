@@ -121,7 +121,7 @@ class _ConversationScreenState extends State<ConversationScreen>
 
       final position = _scrollController.position;
       final extent = position.maxScrollExtent;
-      if ((previousExtent == null || (extent - previousExtent!).abs() > 0.5)) {
+      if (previousExtent == null || (extent - previousExtent!).abs() > 0.5) {
         stableFrames = 0;
       } else {
         stableFrames++;
@@ -172,8 +172,14 @@ class _ConversationScreenState extends State<ConversationScreen>
       widget.remoteCallsign,
     );
     if (sending || text.isEmpty || text.length > maximumMessageLength) return;
+
+    // Sending must never break the active text-input connection. In
+    // particular, do not switch the TextField to readOnly/disabled while the
+    // request is in flight: Android interprets that as a reason to hide the
+    // IME. Keep focus and pin the conversation to its real bottom instead.
     _keepBottomVisibleDuringKeyboardResize = true;
     _composerFocus.requestFocus();
+    _scrollToLatest(immediate: true);
     setState(() => _error = null);
     try {
       await pendingMessageComposer.send(
@@ -339,7 +345,6 @@ class _ConversationScreenState extends State<ConversationScreen>
                   key: const Key('messageComposer'),
                   controller: _composer,
                   focusNode: _composerFocus,
-                  readOnly: sending,
                   maxLength: maximumMessageLength,
                   textInputAction: TextInputAction.send,
                   inputFormatters: [
