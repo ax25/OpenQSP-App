@@ -39,7 +39,7 @@ final class AprsMessagesTransport
   static const OpenQspCodec _codec = OpenQspCodec();
   static const Ax25Encoder _ax25Encoder = Ax25Encoder();
   static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
-  static final RegExp _ackActivityId = RegExp(r'\bID: ([0-9A-Za-z]{1,5})\b');
+  static final RegExp _aprsResponseId = RegExp(r'\bID: ([0-9A-Za-z]{1,5})\b');
 
   final StreamController<MessagingEvent> _events =
       StreamController<MessagingEvent>.broadcast();
@@ -54,6 +54,7 @@ final class AprsMessagesTransport
   int _lastObservedOpenQspFrameCount = 0;
   int _lastObservedOpenQspFragments = 0;
   int _lastObservedAprsAcks = 0;
+  int _lastObservedAprsRejects = 0;
   RealtimeConnectionState? _lastEmittedConnectionState;
   _PendingSync? _pendingSync;
   int _localSequence = 0;
@@ -87,6 +88,7 @@ final class AprsMessagesTransport
       _lastObservedOpenQspFrameCount = _tnc.openQspFramesRx;
       _lastObservedOpenQspFragments = _tnc.openQspFragmentsRx;
       _lastObservedAprsAcks = _tnc.aprsAcks;
+      _lastObservedAprsRejects = _tnc.aprsRejects;
       session.addListener(_onSessionChanged);
       _tnc.addListener(_onTncChanged);
     }
@@ -119,11 +121,30 @@ final class AprsMessagesTransport
     final ackCount = _tnc.aprsAcks;
     if (ackCount != _lastObservedAprsAcks) {
       _lastObservedAprsAcks = ackCount;
-      final id = _latestAprsAckId();
+      final id = _latestAprsResponseId();
       final pending = id == null ? null : _pendingByAprsMessageId[id];
       if (pending != null && !pending.stored) {
-        _setPendingStatus(pending, MessageDeliveryStatus.processing);
-        pending.touch(responseTimeout, () => _timeoutPending(pending));
+        _pendingByAprsMessageId.remove(id);
+        final attemptComplete = pending.acknowledge(id);
+        if (attemptComplete && pending.hasBeenTransmitted) {
+          _markStored(pending);
+        } else {
+          _setPendingStatus(pending, MessageDeliveryStatus.processing);
+          pending.touch(responseTimeout, () => _timeoutPending(pending));
+        }
+      }
+    }
+
+    final rejectCount = _tnc.aprsRejects;
+    if (rejectCount != _lastObservedAprsRejects) {
+      _lastObservedAprsRejects = rejectCount;
+      final id = _latestAprsResponseId();
+      final pending = id == null ? null : _pendingByAprsMessageId[id];
+      if (pending != null && !pending.stored) {
+        _pendingByAprsMessageId.removeWhere((_, value) => identical(value, pending));
+        pending.rejectAttempt();
+        _setPendingStatus(pending, MessageDeliveryStatus.retry);
+        pending.cancelTimeout();
       }
     }
 
@@ -144,6 +165,8 @@ final class AprsMessagesTransport
     if (object == null) return;
 
     switch (object) {
+      // Compatibility with older servers. New APRS servers use the commit ACK
+      // of the request fragments instead of sending a separate STORED frame.
       case OpenQspStored():
         final pending = _oldestPendingStoredConfirmation();
         if (pending != null) _markStored(pending);
@@ -207,9 +230,9 @@ final class AprsMessagesTransport
     }
   }
 
-  String? _latestAprsAckId() {
+  String? _latestAprsResponseId() {
     if (_tnc.aprsActivity.isEmpty) return null;
-    final match = _ackActivityId.firstMatch(_tnc.aprsActivity.first);
+    final match = _aprsResponseId.firstMatch(_tnc.aprsActivity.first);
     return match?.group(1)?.toUpperCase();
   }
 
@@ -246,6 +269,7 @@ final class AprsMessagesTransport
     _pendingSends.remove(pending.message.id);
     _pendingStoredOrder.remove(pending);
     _pendingByAprsMessageId.removeWhere((_, value) => identical(value, pending));
+    pending.clearAttempt();
   }
 
   void _mergeSessionMessages(Iterable<InternetMessage> incoming) {
@@ -416,10 +440,13 @@ final class AprsMessagesTransport
     _setPendingStatus(pending, MessageDeliveryStatus.processing);
     final core = _codec.encode(pending.request);
     final fragments = fragmentFrame(core, pending.transactionId);
+    _pendingByAprsMessageId.removeWhere((_, value) => identical(value, pending));
+    pending.beginAttempt();
     pending.hasBeenTransmitted = true;
     for (final fragment in fragments) {
       final messageId = _allocateAprsMessageId();
       _pendingByAprsMessageId[messageId] = pending;
+      pending.expectAck(messageId);
       final information = _messageEncoder.encode(
         addressee: openQspAprsAddressee,
         body: fragment.body,
@@ -551,11 +578,25 @@ final class _PendingSend {
   final InternetMessage message;
   final OpenQspSendMessage request;
   final String transactionId;
+  final Set<String> _awaitingAprsAcks = <String>{};
   MessageDeliveryStatus status;
   Timer? _timeout;
   bool hasBeenTransmitted = false;
   bool queuedOrTransmitting = false;
   bool stored = false;
+
+  void beginAttempt() => _awaitingAprsAcks.clear();
+
+  void expectAck(String messageId) => _awaitingAprsAcks.add(messageId);
+
+  bool acknowledge(String messageId) {
+    final removed = _awaitingAprsAcks.remove(messageId);
+    return removed && _awaitingAprsAcks.isEmpty;
+  }
+
+  void rejectAttempt() => _awaitingAprsAcks.clear();
+
+  void clearAttempt() => _awaitingAprsAcks.clear();
 
   void touch(Duration timeout, void Function() onTimeout) {
     if (stored) return;
