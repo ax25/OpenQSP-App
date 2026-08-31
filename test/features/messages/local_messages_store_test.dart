@@ -65,6 +65,24 @@ void main() {
 
     expect(await store.cursor('EA3GNU', 'aprs'), '15');
   });
+
+  test('late APRS cursor writes cannot move the persisted cursor backwards', () async {
+    final store = PreferencesLocalMessagesStore();
+
+    await store.setCursor('EA3GNU', 'aprs', '15');
+    await store.setCursor('EA3GNU', 'aprs', '12');
+
+    expect(await store.cursor('EA3GNU', 'aprs'), '15');
+  });
+
+  test('non-APRS cursor writes retain replacement semantics', () async {
+    final store = PreferencesLocalMessagesStore();
+
+    await store.setCursor('EA3GNU', 'internet', '15');
+    await store.setCursor('EA3GNU', 'internet', '12');
+
+    expect(await store.cursor('EA3GNU', 'internet'), '12');
+  });
 }
 
 InternetMessage _message(int sequence) => InternetMessage(
