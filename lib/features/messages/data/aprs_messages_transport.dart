@@ -242,8 +242,9 @@ final class AprsMessagesTransport
 
     _pendingByAprsMessageId.remove(id);
     if (pending.commitAckAttempt && id.startsWith('C')) {
-      final attemptComplete = pending.acknowledge(id);
-      if (attemptComplete && pending.hasBeenTransmitted) {
+      final isCommitAck = pending.isCommitAck(id);
+      pending.acknowledge(id);
+      if (isCommitAck && pending.hasBeenTransmitted) {
         _markStored(pending);
       } else {
         _setPendingStatus(pending, MessageDeliveryStatus.processing);
@@ -481,10 +482,14 @@ final class AprsMessagesTransport
     _pendingByAprsMessageId.removeWhere((_, value) => identical(value, pending));
     pending.beginAttempt(commitAck: commitAck);
     pending.hasBeenTransmitted = true;
-    for (final fragment in fragments) {
+    for (var index = 0; index < fragments.length; index++) {
+      final fragment = fragments[index];
       final messageId = _allocateAprsMessageId(commitAck: commitAck);
       _pendingByAprsMessageId[messageId] = pending;
-      pending.expectAck(messageId);
+      pending.expectAck(
+        messageId,
+        commit: commitAck && index == fragments.length - 1,
+      );
       final information = _messageEncoder.encode(
         addressee: openQspAprsAddressee,
         body: fragment.body,
@@ -620,6 +625,7 @@ final class _PendingSend {
   final Set<String> _awaitingAprsAcks = <String>{};
   MessageDeliveryStatus status;
   Timer? _timeout;
+  String? _commitAckMessageId;
   bool hasBeenTransmitted = false;
   bool queuedOrTransmitting = false;
   bool stored = false;
@@ -627,10 +633,16 @@ final class _PendingSend {
 
   void beginAttempt({required bool commitAck}) {
     _awaitingAprsAcks.clear();
+    _commitAckMessageId = null;
     commitAckAttempt = commitAck;
   }
 
-  void expectAck(String messageId) => _awaitingAprsAcks.add(messageId);
+  void expectAck(String messageId, {bool commit = false}) {
+    _awaitingAprsAcks.add(messageId);
+    if (commit) _commitAckMessageId = messageId;
+  }
+
+  bool isCommitAck(String messageId) => _commitAckMessageId == messageId;
 
   bool acknowledge(String messageId) {
     final removed = _awaitingAprsAcks.remove(messageId);
@@ -639,10 +651,14 @@ final class _PendingSend {
 
   void forgetAck(String messageId) => _awaitingAprsAcks.remove(messageId);
 
-  void rejectAttempt() => _awaitingAprsAcks.clear();
+  void rejectAttempt() {
+    _awaitingAprsAcks.clear();
+    _commitAckMessageId = null;
+  }
 
   void clearAttempt() {
     _awaitingAprsAcks.clear();
+    _commitAckMessageId = null;
     commitAckAttempt = false;
   }
 
