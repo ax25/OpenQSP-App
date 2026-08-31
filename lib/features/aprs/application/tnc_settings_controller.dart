@@ -105,7 +105,6 @@ class TncSettingsController extends ChangeNotifier {
   final OpenQspAprsReassembler _trafficTxReassembler = OpenQspAprsReassembler();
   final Map<String, _CompletedOpenQspTransaction>
   _completedOpenQspTransactions = {};
-  final Map<String, _OpenQspInboundAckProgress> _openQspInboundAckProgress = {};
   static const OpenQspCodec _openQspCodec = OpenQspCodec();
   static const Ax25Encoder _ax25Encoder = Ax25Encoder();
   static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
@@ -391,9 +390,7 @@ class TncSettingsController extends ChangeNotifier {
             lastOpenQspIgate = igate.toString();
           }
           if (packet.messageId case final messageId?) {
-            if (_shouldAckOpenQspFragment(packet, messageId)) {
-              unawaited(_sendAprsAck(messageId));
-            }
+            unawaited(_sendAprsAck(messageId));
           }
           _decodeOpenQsp(packet);
         }
@@ -412,54 +409,6 @@ class TncSettingsController extends ChangeNotifier {
     _aprsActivity.insert(0, _describeAprs(packet));
     if (_aprsActivity.length > 10) _aprsActivity.removeLast();
     _debugTraffic(packet, transmitted: false);
-  }
-
-  bool _shouldAckOpenQspFragment(AprsTextMessage message, String messageId) {
-    try {
-      final fragment = parseFragment(message.text);
-      final now = DateTime.now().toUtc();
-      _openQspInboundAckProgress.removeWhere(
-        (_, progress) => now.difference(progress.lastSeen) >= openQspAprsDefaultTtl,
-      );
-      final key = '${message.frame.source}|${fragment.transactionId}';
-      var progress = _openQspInboundAckProgress[key];
-
-      // A completed Q1 transaction ID may later be reused. A different APRS
-      // message ID on fragment 0 identifies a new outbound transaction and
-      // resets the stale-fragment suppression state without confusing delayed
-      // echoes of the previous fragment 0.
-      final startsNewReuse =
-          fragment.index == 0 &&
-          progress != null &&
-          progress.highestIndex == progress.total - 1 &&
-          progress.firstMessageId != null &&
-          progress.firstMessageId != messageId;
-      if (progress == null || progress.total != fragment.total || startsNewReuse) {
-        progress = _OpenQspInboundAckProgress(
-          total: fragment.total,
-          highestIndex: -1,
-          firstMessageId: fragment.index == 0 ? messageId : null,
-          lastSeen: now,
-        );
-        _openQspInboundAckProgress[key] = progress;
-      }
-
-      progress.lastSeen = now;
-      if (fragment.index < progress.highestIndex) {
-        return false;
-      }
-      if (fragment.index > progress.highestIndex) {
-        progress.highestIndex = fragment.index;
-      }
-      if (fragment.index == 0 && progress.firstMessageId == null) {
-        progress.firstMessageId = messageId;
-      }
-      return true;
-    } on Object {
-      // Preserve the previous behavior if a supposedly OpenQSP payload cannot
-      // be parsed here; the regular decoder will account for the error.
-      return true;
-    }
   }
 
   Future<void> _sendAprsAck(String messageId) async {
@@ -770,7 +719,6 @@ class TncSettingsController extends ChangeNotifier {
     _cancelOpenQspCheckTimers();
     _openQspCheckDeadline = null;
     openQspCheckState = OpenQspCheckState.notChecked;
-    _openQspInboundAckProgress.clear();
     await service.disconnect();
     if (_disposed) return;
     if (state == TncConnectionState.connected ||
@@ -787,7 +735,6 @@ class TncSettingsController extends ChangeNotifier {
     _cancelOpenQspCheckTimers();
     _openQspCheckDeadline = null;
     openQspCheckState = OpenQspCheckState.notChecked;
-    _openQspInboundAckProgress.clear();
     await service.disconnect();
     await storage.clear();
     device = null;
@@ -815,7 +762,6 @@ class TncSettingsController extends ChangeNotifier {
     if (_disposed) return;
     _disposed = true;
     _cancelOpenQspCheckTimers();
-    _openQspInboundAckProgress.clear();
     unawaited(_byteSubscription.cancel());
     unawaited(_frameSubscription.cancel());
     unawaited(_connectionLossSubscription.cancel());
@@ -833,18 +779,4 @@ final class _CompletedOpenQspTransaction {
 
   final DateTime completedAt;
   final List<int> bytes;
-}
-
-final class _OpenQspInboundAckProgress {
-  _OpenQspInboundAckProgress({
-    required this.total,
-    required this.highestIndex,
-    required this.firstMessageId,
-    required this.lastSeen,
-  });
-
-  final int total;
-  int highestIndex;
-  String? firstMessageId;
-  DateTime lastSeen;
 }
