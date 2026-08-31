@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../../core/openqsp_protocol/openqsp_constants.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../domain/tnc_connection_state.dart';
@@ -47,6 +48,7 @@ final class AprsSessionController extends ChangeNotifier {
   int _lastObservedFramesRx = 0;
   DateTime? _capabilitiesCheckStartedAt;
   AprsSessionState? _responseHealthOverride;
+  int _serverCapabilities = 0;
 
   bool get active => _active;
   AprsActivityState get activityState => _activityState;
@@ -54,6 +56,9 @@ final class AprsSessionController extends ChangeNotifier {
   DateTime? get lastServerRx => tncController.lastValidOpenQspRx;
   bool get serverReachable =>
       state == AprsSessionState.available || state == AprsSessionState.slow;
+  int get serverCapabilities => _serverCapabilities;
+  bool get supportsAprsCommitAck =>
+      _serverCapabilities & OpenQspCapability.aprsCommitAck != 0;
 
   AprsSessionState get state {
     if (!_active) return AprsSessionState.inactive;
@@ -132,6 +137,7 @@ final class AprsSessionController extends ChangeNotifier {
     _active = true;
     _activityState = AprsActivityState.idle;
     _responseHealthOverride = null;
+    _serverCapabilities = 0;
     _capabilitiesCheckStartedAt = null;
     _lastObservedFramesRx = tncController.openQspFramesRx;
     _startAgeTimer();
@@ -162,6 +168,7 @@ final class AprsSessionController extends ChangeNotifier {
     _active = false;
     _activityState = AprsActivityState.idle;
     _responseHealthOverride = null;
+    _serverCapabilities = 0;
     _capabilitiesCheckStartedAt = null;
     _lastObservedFramesRx = tncController.openQspFramesRx;
     _stopAgeTimer();
@@ -195,6 +202,7 @@ final class AprsSessionController extends ChangeNotifier {
     if (!_active) return;
     final current = state;
     if (object is OpenQspCapabilities) {
+      _serverCapabilities = object.capabilities;
       final startedAt = _capabilitiesCheckStartedAt;
       final elapsed = startedAt == null
           ? null
