@@ -203,13 +203,13 @@ class TncSettingsController extends ChangeNotifier {
         now: DateTime.now().toUtc(),
       );
       if (bytes == null) {
-        return 'OpenQSP fragment ${fragment.index + 1}/${fragment.total} '
+        return 'fragment ${fragment.index + 1}/${fragment.total} '
             '(transaction ${fragment.transactionId})';
       }
       final decoded = _openQspCodec.decode(bytes);
       return _describeOpenQspObject(decoded.object);
     } on Object {
-      return 'OpenQSP data: ${packet.text}';
+      return 'unrecognized OpenQSP data: ${packet.text}';
     }
   }
 
@@ -275,7 +275,7 @@ class TncSettingsController extends ChangeNotifier {
         : comment.isEmpty
         ? ''
         : ' · ${_singleLine(comment)}';
-    return '${latitude.toStringAsFixed(5)}, ${longitude.toStringAsFixed(5)}$suffix';
+    return 'lat ${latitude.toStringAsFixed(5)}, lon ${longitude.toStringAsFixed(5)}$suffix';
   }
 
   static String _humanizeWeather(String payload) {
@@ -293,7 +293,7 @@ class TncSettingsController extends ChangeNotifier {
       final fahrenheit = int.tryParse(temperature.group(1)!);
       if (fahrenheit != null) {
         final celsius = (fahrenheit - 32) * 5 / 9;
-        parts.add('${celsius.toStringAsFixed(1)} °C (${fahrenheit} °F)');
+        parts.add('temperature ${celsius.toStringAsFixed(1)} °C (${fahrenheit} °F)');
       }
     }
     final humidity = RegExp(r'h(\d{2})').firstMatch(data);
