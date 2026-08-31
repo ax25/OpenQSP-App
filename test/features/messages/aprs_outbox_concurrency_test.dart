@@ -80,6 +80,17 @@ void main() {
     return transport;
   }
 
+  Future<void> enableCommitAck() async {
+    _injectObject(
+      service,
+      const OpenQspCapabilities(protocolVersion: 1, capabilities: 0x1f),
+      transactionId: 'CAP',
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.supportsAprsCommitAck, isTrue);
+  }
+
   setUp(() async {
     service = _FakeTncService();
     tnc = TncSettingsController(
@@ -144,6 +155,7 @@ void main() {
   });
 
   test('two queued sends are stored only by their own commit ACK', () async {
+    await enableCommitAck();
     var sequence = 0;
     final ids = ['A01', 'B01'];
     final transport = await buildTransport(
@@ -173,7 +185,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
-    _injectAck(service, messageId: '00');
+    _injectAck(service, messageId: 'C00');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
@@ -184,7 +196,7 @@ void main() {
     expect(storedAfterFirst.single.messageId, first.id);
 
     // A duplicate ACK for A must not advance B.
-    _injectAck(service, messageId: '00');
+    _injectAck(service, messageId: 'C00');
     await Future<void>.delayed(Duration.zero);
     final midway = await transport.messages(callsign: 'EA3GNU', token: '');
     expect(
@@ -192,7 +204,7 @@ void main() {
       MessageDeliveryStatus.processing,
     );
 
-    _injectAck(service, messageId: '01');
+    _injectAck(service, messageId: 'C01');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
@@ -204,6 +216,7 @@ void main() {
   });
 
   test('late commit ACK after timeout still proves the message is stored', () async {
+    await enableCommitAck();
     final transport = await buildTransport(
       responseTimeout: const Duration(milliseconds: 40),
       transactionIdFactory: () => 'LATE',
@@ -224,7 +237,7 @@ void main() {
       MessageDeliveryStatus.retry,
     );
 
-    _injectAck(service, messageId: '00');
+    _injectAck(service, messageId: 'C00');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
