@@ -94,11 +94,30 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
   Future<void> setCursor(String callsign, String transport, String value) =>
       _enqueue(() async {
         final preferences = await _preferences;
+        final normalizedCallsign = _normalize(callsign);
         final cursors = _decodeCursors(
-          preferences.getString(_cursorsKey(callsign)),
+          preferences.getString(_cursorsKey(normalizedCallsign)),
         );
+
+        if (transport == 'aprs') {
+          final incoming = int.tryParse(value);
+          final current = int.tryParse(cursors[transport] ?? '');
+          if (incoming != null &&
+              incoming >= 0 &&
+              incoming <= 0xffffffff &&
+              current != null &&
+              current >= 0 &&
+              current <= 0xffffffff &&
+              incoming < current) {
+            return;
+          }
+        }
+
         cursors[transport] = value;
-        await preferences.setString(_cursorsKey(callsign), jsonEncode(cursors));
+        await preferences.setString(
+          _cursorsKey(normalizedCallsign),
+          jsonEncode(cursors),
+        );
       });
 
   Future<void> _enqueue(Future<void> Function() operation) {
