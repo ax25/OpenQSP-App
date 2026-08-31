@@ -19,19 +19,25 @@ class ConversationScreen extends StatefulWidget {
   State<ConversationScreen> createState() => _ConversationScreenState();
 }
 
-class _ConversationScreenState extends State<ConversationScreen> {
+class _ConversationScreenState extends State<ConversationScreen>
+    with WidgetsBindingObserver {
   final _composer = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
+  final Set<String> _hiddenMessageIds = {};
   bool _loading = true;
   String? _error;
   int _messageCount = 0;
+  bool _keepBottomVisibleDuringKeyboardResize = false;
+  int _initialBottomScrollGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_changed);
     pendingMessageComposer.addListener(_pendingComposerChanged);
+    _scrollController.addListener(_scrollChanged);
     final pendingText = pendingMessageComposer.textFor(
       widget.controller,
       widget.remoteCallsign,
@@ -49,7 +55,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     if (!mounted) return;
     _messageCount = widget.controller.historyFor(widget.remoteCallsign).length;
     setState(() => _loading = false);
-    _scrollToLatest();
+    _stabilizeInitialBottomScroll();
   }
 
   void _changed() {
@@ -80,15 +86,83 @@ class _ConversationScreenState extends State<ConversationScreen> {
     setState(() {});
   }
 
-  void _scrollToLatest() {
+  bool _isAtBottom() {
+    if (!_scrollController.hasClients) return true;
+    final position = _scrollController.position;
+    return position.maxScrollExtent - position.pixels <= 24;
+  }
+
+  void _prepareForKeyboard() {
+    _keepBottomVisibleDuringKeyboardResize = _isAtBottom();
+  }
+
+  void _scrollChanged() {
+    if (!_composerFocus.hasFocus) return;
+    _keepBottomVisibleDuringKeyboardResize = _isAtBottom();
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (!_keepBottomVisibleDuringKeyboardResize) return;
+    _scrollToLatest(immediate: true);
+  }
+
+  void _stabilizeInitialBottomScroll() {
+    final generation = ++_initialBottomScrollGeneration;
+    double? previousExtent;
+    var stableFrames = 0;
+
+    void settle(_) {
+      if (!mounted || generation != _initialBottomScrollGeneration) return;
+      if (!_scrollController.hasClients) {
+        WidgetsBinding.instance.addPostFrameCallback(settle);
+        return;
+      }
+
+      final position = _scrollController.position;
+      final extent = position.maxScrollExtent;
+      if (previousExtent == null || (extent - previousExtent!).abs() > 0.5) {
+        stableFrames = 0;
+      } else {
+        stableFrames++;
+      }
+      previousExtent = extent;
+
+      if ((position.pixels - extent).abs() > 0.5) {
+        position.jumpTo(extent);
+      }
+
+      if (stableFrames < 2) {
+        WidgetsBinding.instance.addPostFrameCallback(settle);
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(settle);
+  }
+
+  void _scrollToLatest({bool immediate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (immediate) {
+        _scrollController.jumpTo(target);
+        return;
+      }
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        target,
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
       );
     });
+  }
+
+  void _clearVisibleMessages() {
+    final messages = widget.controller.historyFor(widget.remoteCallsign);
+    if (messages.isEmpty) return;
+    setState(() {
+      _hiddenMessageIds.addAll(messages.map((message) => message.id));
+    });
+    _composerFocus.requestFocus();
   }
 
   Future<void> _send() async {
@@ -98,6 +172,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
       widget.remoteCallsign,
     );
     if (sending || text.isEmpty || text.length > maximumMessageLength) return;
+
+    // Sending must never break the active text-input connection. In
+    // particular, do not switch the TextField to readOnly/disabled while the
+    // request is in flight: Android interprets that as a reason to hide the
+    // IME. Keep focus and pin the conversation to its real bottom instead.
+    _keepBottomVisibleDuringKeyboardResize = true;
+    _composerFocus.requestFocus();
+    _scrollToLatest(immediate: true);
     setState(() => _error = null);
     try {
       await pendingMessageComposer.send(
@@ -117,8 +199,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   @override
   void dispose() {
+    _initialBottomScrollGeneration++;
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_changed);
     pendingMessageComposer.removeListener(_pendingComposerChanged);
+    _scrollController.removeListener(_scrollChanged);
     _composer.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
@@ -127,13 +212,25 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final messages = widget.controller.historyFor(widget.remoteCallsign);
+    final allMessages = widget.controller.historyFor(widget.remoteCallsign);
+    final messages = allMessages
+        .where((message) => !_hiddenMessageIds.contains(message.id))
+        .toList(growable: false);
     final sending = pendingMessageComposer.isSending(
       widget.controller,
       widget.remoteCallsign,
     );
     return Scaffold(
-      appBar: AppBar(title: Text(widget.remoteCallsign)),
+      appBar: AppBar(
+        title: Text(widget.remoteCallsign),
+        actions: [
+          TextButton(
+            key: const Key('clearMessages'),
+            onPressed: messages.isEmpty ? null : _clearVisibleMessages,
+            child: const Text('Vaciar mensajes'),
+          ),
+        ],
+      ),
       body: Column(children: [
         if (_error != null)
           MaterialBanner(
@@ -248,13 +345,18 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   key: const Key('messageComposer'),
                   controller: _composer,
                   focusNode: _composerFocus,
-                  readOnly: sending,
                   maxLength: maximumMessageLength,
+                  textInputAction: TextInputAction.send,
                   inputFormatters: [
                     LengthLimitingTextInputFormatter(maximumMessageLength),
                   ],
                   decoration: const InputDecoration(labelText: 'Message'),
-                  onSubmitted: (_) => _send(),
+                  onTap: _prepareForKeyboard,
+                  onSubmitted: (_) {
+                    _keepBottomVisibleDuringKeyboardResize = true;
+                    _composerFocus.requestFocus();
+                    _send();
+                  },
                 ),
               ),
               const SizedBox(width: 8),
