@@ -54,7 +54,8 @@ class TncSettingsController extends ChangeNotifier {
     });
   }
 
-  static const _ansiCyan = '\x1B[36m';
+  static const _ansiBlue = '\x1B[34m';
+  static const _ansiGreen = '\x1B[32m';
   static const _ansiRed = '\x1B[31m';
   static const _ansiReset = '\x1B[0m';
 
@@ -144,13 +145,44 @@ class TncSettingsController extends ChangeNotifier {
   bool _isLocalAprsPacket(AprsPacket packet) {
     final local = _localAprsIdentity;
     if (local == null) return false;
-    if (packet.frame.source.toString() == local) return true;
     return switch (packet) {
       AprsTextMessage(:final addressee) => addressee == local,
       AprsAck(:final addressee) => addressee == local,
       AprsReject(:final addressee) => addressee == local,
-      AprsUnknown() || AprsInvalid() => false,
+      AprsUnknown() || AprsInvalid() =>
+        packet.frame.destination.toString() == local,
     };
+  }
+
+  static String _singleLine(String value) =>
+      value.replaceAll('\r', ' ').replaceAll('\n', ' ').trim();
+
+  static String _trafficLine(String direction, AprsPacket packet) {
+    final source = packet.frame.source;
+    final destination = switch (packet) {
+      AprsTextMessage(:final addressee) => addressee,
+      AprsAck(:final addressee) => addressee,
+      AprsReject(:final addressee) => addressee,
+      AprsUnknown() || AprsInvalid() => packet.frame.destination.toString(),
+    };
+    final content = switch (packet) {
+      AprsTextMessage(:final text) => text,
+      AprsAck(:final messageId) => 'ack$messageId',
+      AprsReject(:final messageId) => 'rej$messageId',
+      AprsUnknown() => packet.frame.informationText,
+      AprsInvalid(:final reason) =>
+        '[invalid: $reason] ${packet.frame.informationText}',
+    };
+    return '$direction $source -> $destination | ${_singleLine(content)}';
+  }
+
+  void _debugTraffic(AprsPacket packet, {required bool transmitted}) {
+    final color = transmitted
+        ? _ansiRed
+        : _isLocalAprsPacket(packet)
+        ? _ansiGreen
+        : _ansiBlue;
+    _debugColor(_trafficLine(transmitted ? 'TX' : 'RX', packet), color);
   }
 
   void _decodeAx25(List<int> payload) {
@@ -160,11 +192,6 @@ class TncSettingsController extends ChangeNotifier {
       _ax25Activity.insert(0, _describeAx25(frame));
       if (_ax25Activity.length > 10) _ax25Activity.removeLast();
       _decodeAprs(frame);
-      if (kDebugMode) {
-        debugPrint(
-          'AX.25 frame decoded: ${frame.source} > ${frame.destination}',
-        );
-      }
     } on Ax25DecodeException catch (error) {
       ax25DecodeErrors++;
       _debugColor('AX.25 decode error: ${error.message}', _ansiRed);
@@ -173,11 +200,18 @@ class TncSettingsController extends ChangeNotifier {
 
   void _decodeAprs(Ax25Frame frame) {
     final packet = _aprsParser.parse(frame);
-    if (packet == null) return;
+    if (packet == null) {
+      _debugColor(
+        'RX ${frame.source} -> ${frame.destination} | '
+        '${_singleLine(frame.informationText)}',
+        _ansiBlue,
+      );
+      return;
+    }
     rxAprsPackets++;
     if (packet is AprsInvalid) {
       aprsParseErrors++;
-      _debugColor(_aprsLog(packet), _ansiRed);
+      _debugTraffic(packet, transmitted: false);
       return;
     }
     switch (packet) {
@@ -208,11 +242,7 @@ class TncSettingsController extends ChangeNotifier {
     }
     _aprsActivity.insert(0, _describeAprs(packet));
     if (_aprsActivity.length > 10) _aprsActivity.removeLast();
-    if (_isLocalAprsPacket(packet)) {
-      _debugColor(_aprsLog(packet), _ansiCyan);
-    } else if (kDebugMode) {
-      debugPrint(_aprsLog(packet));
-    }
+    _debugTraffic(packet, transmitted: false);
   }
 
   Future<void> _sendAprsAck(String messageId) async {
@@ -421,19 +451,6 @@ class TncSettingsController extends ChangeNotifier {
     };
   }
 
-  static String _aprsLog(AprsPacket packet) => switch (packet) {
-    AprsTextMessage(:final addressee, :final messageId) =>
-      'APRS message decoded: ${packet.frame.source} -> $addressee '
-          'id=${messageId ?? '-'}',
-    AprsAck(:final addressee, :final messageId) =>
-      'APRS ACK decoded: ${packet.frame.source} -> $addressee id=$messageId',
-    AprsReject(:final addressee, :final messageId) =>
-      'APRS REJ decoded: ${packet.frame.source} -> $addressee id=$messageId',
-    AprsUnknown(:final typeIdentifier) =>
-      'APRS packet decoded: ${packet.frame.source} type=$typeIdentifier',
-    AprsInvalid(:final reason) => 'APRS parse error: $reason',
-  };
-
   static String _describeAx25(Ax25Frame frame) {
     final via = frame.digipeaters.isEmpty
         ? '-'
@@ -460,7 +477,13 @@ class TncSettingsController extends ChangeNotifier {
         final ax25 = _ax25Decoder.decode(frame.payload);
         final aprs = _aprsParser.parse(ax25);
         if (aprs != null) {
-          _debugColor('TX ${_aprsLog(aprs)}', _ansiCyan);
+          _debugTraffic(aprs, transmitted: true);
+        } else {
+          _debugColor(
+            'TX ${ax25.source} -> ${ax25.destination} | '
+            '${_singleLine(ax25.informationText)}',
+            _ansiRed,
+          );
         }
       } on Object {
         // TX diagnostics must never affect transport behavior.
