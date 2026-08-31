@@ -127,9 +127,6 @@ final class AprsMessagesTransport
         _pendingByAprsMessageId.remove(id);
         final attemptComplete = pending.acknowledge(id);
         if (attemptComplete && pending.hasBeenTransmitted) {
-          // The server delays the ACK that completes a SEND_MESSAGE until the
-          // Core operation is durably accepted. Therefore ACKing every
-          // fragment in the current attempt is the APRS equivalent of STORED.
           _markStored(pending);
         } else {
           _setPendingStatus(pending, MessageDeliveryStatus.processing);
