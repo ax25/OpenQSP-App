@@ -6,7 +6,6 @@ import '../../../core/openqsp_protocol/openqsp_codec.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../../aprs/aprs/aprs_message_encoder.dart';
-import '../../aprs/aprs/aprs_packet.dart';
 import '../../aprs/application/aprs_session_controller.dart';
 import '../../aprs/application/tnc_settings_controller.dart';
 import '../../aprs/ax25/ax25_address.dart';
@@ -49,7 +48,7 @@ final class AprsMessagesTransport
   final Map<String, _PendingSend> _pendingSends = {};
   final Map<String, _PendingSend> _pendingByAprsMessageId = {};
   final List<_PendingSend> _pendingStoredOrder = [];
-  Future<void> _operationTail = Future<void>.value();
+  Future<void> _txTail = Future<void>.value();
   Future<SyncBatch>? _syncInFlight;
   int _lastObservedOpenQspFrameCount = 0;
   int _lastObservedOpenQspFragments = 0;
@@ -275,16 +274,8 @@ final class AprsMessagesTransport
     final active = _syncInFlight;
     if (active != null) return active;
 
-    final result = Completer<SyncBatch>();
-    final future = result.future;
+    final future = _syncOne(cursor);
     _syncInFlight = future;
-    _operationTail = _operationTail.then((_) async {
-      try {
-        result.complete(await _syncOne(cursor));
-      } on Object catch (error, stackTrace) {
-        result.completeError(error, stackTrace);
-      }
-    });
     future.then(
       (_) {
         if (identical(_syncInFlight, future)) _syncInFlight = null;
@@ -309,7 +300,9 @@ final class AprsMessagesTransport
     pending.touch(responseTimeout);
     session.setActivity(AprsActivityState.askingForNewMessages);
     try {
-      await _sendObject(OpenQspGetNewMessages(since: since, max: 8));
+      await _enqueueTx(
+        () => _sendObject(OpenQspGetNewMessages(since: since, max: 8)),
+      );
       return await pending.completer.future;
     } finally {
       pending.cancelTimeout();
@@ -355,6 +348,7 @@ final class AprsMessagesTransport
         recipient: recipient,
         body: text,
       ),
+      transactionId: _transactionIdFactory(),
     );
     _messages.add(message);
     _pendingSends[message.id] = pending;
@@ -364,23 +358,50 @@ final class AprsMessagesTransport
   }
 
   @override
-  Future<void> retryMessage(String messageId) async {
-    final pending = _pendingSends[messageId];
-    if (pending == null || pending.stored) return;
+  Future<void> retryMessage(InternetMessage message) async {
+    if (_closed || !_serverReachable) {
+      throw StateError('APRS OpenQSP session is not available');
+    }
+    var pending = _pendingSends[message.id];
+    if (pending == null) {
+      if (!message.id.startsWith('aprs-local-') ||
+          message.from.toUpperCase() != callsign) {
+        throw StateError('Message is not an APRS pending send');
+      }
+      pending = _PendingSend(
+        message: message,
+        request: OpenQspSendMessage(
+          createdAt: message.createdAt.millisecondsSinceEpoch ~/ 1000,
+          recipient: message.to.toUpperCase(),
+          body: message.body,
+        ),
+        transactionId: _transactionIdFactory(),
+      );
+      _pendingSends[message.id] = pending;
+      _pendingStoredOrder.add(pending);
+      final index = _messages.indexWhere((value) => value.id == message.id);
+      if (index < 0) {
+        _messages.add(message);
+      }
+    }
+    if (pending.stored) return;
     _setPendingStatus(pending, MessageDeliveryStatus.processing);
     _enqueuePendingSend(pending);
   }
 
   void _enqueuePendingSend(_PendingSend pending) {
-    _operationTail = _operationTail.then((_) async {
-      if (_closed || pending.stored) return;
-      try {
-        await _transmitPending(pending);
-      } on Object {
-        _setPendingStatus(pending, MessageDeliveryStatus.retry);
-        pending.cancelTimeout();
-      }
-    });
+    if (pending.queuedOrTransmitting || pending.stored) return;
+    pending.queuedOrTransmitting = true;
+    unawaited(
+      _enqueueTx(() => _transmitPending(pending)).then(
+        (_) => pending.queuedOrTransmitting = false,
+        onError: (Object _, StackTrace __) {
+          pending.queuedOrTransmitting = false;
+          _setPendingStatus(pending, MessageDeliveryStatus.retry);
+          pending.cancelTimeout();
+        },
+      ),
+    );
   }
 
   Future<void> _transmitPending(_PendingSend pending) async {
@@ -393,8 +414,7 @@ final class AprsMessagesTransport
     }
     _setPendingStatus(pending, MessageDeliveryStatus.processing);
     final core = _codec.encode(pending.request);
-    final transactionId = _transactionIdFactory();
-    final fragments = fragmentFrame(core, transactionId);
+    final fragments = fragmentFrame(core, pending.transactionId);
     pending.hasBeenTransmitted = true;
     for (final fragment in fragments) {
       final messageId = _allocateAprsMessageId();
@@ -422,6 +442,18 @@ final class AprsMessagesTransport
       await _tnc.sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
     }
     pending.touch(responseTimeout, () => _timeoutPending(pending));
+  }
+
+  Future<T> _enqueueTx<T>(Future<T> Function() operation) {
+    final result = Completer<T>();
+    _txTail = _txTail.then((_) async {
+      try {
+        result.complete(await operation());
+      } on Object catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    });
+    return result.future;
   }
 
   String _allocateAprsMessageId() {
@@ -509,14 +541,19 @@ final class AprsMessagesTransport
 }
 
 final class _PendingSend {
-  _PendingSend({required this.message, required this.request})
-    : status = message.deliveryStatus;
+  _PendingSend({
+    required this.message,
+    required this.request,
+    required this.transactionId,
+  }) : status = message.deliveryStatus;
 
   final InternetMessage message;
   final OpenQspSendMessage request;
+  final String transactionId;
   MessageDeliveryStatus status;
   Timer? _timeout;
   bool hasBeenTransmitted = false;
+  bool queuedOrTransmitting = false;
   bool stored = false;
 
   void touch(Duration timeout, void Function() onTimeout) {
