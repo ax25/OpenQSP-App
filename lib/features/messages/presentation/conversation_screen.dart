@@ -29,6 +29,7 @@ class _ConversationScreenState extends State<ConversationScreen>
   String? _error;
   int _messageCount = 0;
   bool _keepBottomVisibleDuringKeyboardResize = false;
+  int _initialBottomScrollGeneration = 0;
 
   @override
   void initState() {
@@ -54,7 +55,7 @@ class _ConversationScreenState extends State<ConversationScreen>
     if (!mounted) return;
     _messageCount = widget.controller.historyFor(widget.remoteCallsign).length;
     setState(() => _loading = false);
-    _scrollToLatest(immediate: true);
+    _stabilizeInitialBottomScroll();
   }
 
   void _changed() {
@@ -104,6 +105,39 @@ class _ConversationScreenState extends State<ConversationScreen>
   void didChangeMetrics() {
     if (!_keepBottomVisibleDuringKeyboardResize) return;
     _scrollToLatest(immediate: true);
+  }
+
+  void _stabilizeInitialBottomScroll() {
+    final generation = ++_initialBottomScrollGeneration;
+    double? previousExtent;
+    var stableFrames = 0;
+
+    void settle(_) {
+      if (!mounted || generation != _initialBottomScrollGeneration) return;
+      if (!_scrollController.hasClients) {
+        WidgetsBinding.instance.addPostFrameCallback(settle);
+        return;
+      }
+
+      final position = _scrollController.position;
+      final extent = position.maxScrollExtent;
+      if ((previousExtent == null || (extent - previousExtent!).abs() > 0.5)) {
+        stableFrames = 0;
+      } else {
+        stableFrames++;
+      }
+      previousExtent = extent;
+
+      if ((position.pixels - extent).abs() > 0.5) {
+        position.jumpTo(extent);
+      }
+
+      if (stableFrames < 2) {
+        WidgetsBinding.instance.addPostFrameCallback(settle);
+      }
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback(settle);
   }
 
   void _scrollToLatest({bool immediate = false}) {
@@ -159,6 +193,7 @@ class _ConversationScreenState extends State<ConversationScreen>
 
   @override
   void dispose() {
+    _initialBottomScrollGeneration++;
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_changed);
     pendingMessageComposer.removeListener(_pendingComposerChanged);
