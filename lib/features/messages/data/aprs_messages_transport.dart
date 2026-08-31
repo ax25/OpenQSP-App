@@ -165,7 +165,6 @@ final class AprsMessagesTransport
     if (object == null) return;
 
     switch (object) {
-      // Compatibility with servers that still send a separate STORED frame.
       case OpenQspStored():
         final pending = _oldestPendingStoredConfirmation();
         if (pending != null) _markStored(pending);
