@@ -157,6 +157,14 @@ class TncSettingsController extends ChangeNotifier {
   static String _singleLine(String value) =>
       value.replaceAll('\r', ' ').replaceAll('\n', ' ').trim();
 
+  static String _trafficType(AprsPacket packet) => switch (packet) {
+    AprsTextMessage() => 'MSG',
+    AprsAck() => 'ACK',
+    AprsReject() => 'REJ',
+    AprsUnknown(:final typeIdentifier) => 'APRS/$typeIdentifier',
+    AprsInvalid() => 'INVALID',
+  };
+
   static String _trafficLine(String direction, AprsPacket packet) {
     final source = packet.frame.source;
     final destination = switch (packet) {
@@ -167,13 +175,14 @@ class TncSettingsController extends ChangeNotifier {
     };
     final content = switch (packet) {
       AprsTextMessage(:final text) => text,
-      AprsAck(:final messageId) => 'ack$messageId',
-      AprsReject(:final messageId) => 'rej$messageId',
+      AprsAck(:final messageId) => messageId,
+      AprsReject(:final messageId) => messageId,
       AprsUnknown() => packet.frame.informationText,
       AprsInvalid(:final reason) =>
-        '[invalid: $reason] ${packet.frame.informationText}',
+        '$reason | ${packet.frame.informationText}',
     };
-    return '$direction $source -> $destination | ${_singleLine(content)}';
+    return '$direction $source -> $destination | ${_trafficType(packet)} | '
+        '${_singleLine(content)}';
   }
 
   void _debugTraffic(AprsPacket packet, {required bool transmitted}) {
@@ -202,7 +211,7 @@ class TncSettingsController extends ChangeNotifier {
     final packet = _aprsParser.parse(frame);
     if (packet == null) {
       _debugColor(
-        'RX ${frame.source} -> ${frame.destination} | '
+        'RX ${frame.source} -> ${frame.destination} | AX25 | '
         '${_singleLine(frame.informationText)}',
         _ansiBlue,
       );
@@ -480,7 +489,7 @@ class TncSettingsController extends ChangeNotifier {
           _debugTraffic(aprs, transmitted: true);
         } else {
           _debugColor(
-            'TX ${ax25.source} -> ${ax25.destination} | '
+            'TX ${ax25.source} -> ${ax25.destination} | AX25 | '
             '${_singleLine(ax25.informationText)}',
             _ansiRed,
           );
