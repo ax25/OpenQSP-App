@@ -1,7 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
-
 import 'kiss_encoder.dart';
 import 'kiss_frame.dart';
 
@@ -63,11 +61,10 @@ final class KissDecoder {
   }
 
   void _emitFrame() {
-    final frame = KissFrame.fromCommandByte(_buffer.first, _buffer.skip(1).toList());
-    assert(() {
-      debugPrint('KISS frame decoded: ${frame.payload.length} payload bytes');
-      return true;
-    }());
+    final frame = KissFrame.fromCommandByte(
+      _buffer.first,
+      _buffer.skip(1).toList(),
+    );
     _frames.add(frame);
   }
 

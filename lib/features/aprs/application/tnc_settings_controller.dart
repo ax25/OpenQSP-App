@@ -54,7 +54,8 @@ class TncSettingsController extends ChangeNotifier {
     });
   }
 
-  static const _ansiCyan = '\x1B[36m';
+  static const _ansiBlue = '\x1B[34m';
+  static const _ansiGreen = '\x1B[32m';
   static const _ansiRed = '\x1B[31m';
   static const _ansiReset = '\x1B[0m';
 
@@ -100,6 +101,8 @@ class TncSettingsController extends ChangeNotifier {
   Timer? _openQspCountdownTimer;
   DateTime? _openQspCheckDeadline;
   final OpenQspAprsReassembler _reassembler = OpenQspAprsReassembler();
+  final OpenQspAprsReassembler _trafficRxReassembler = OpenQspAprsReassembler();
+  final OpenQspAprsReassembler _trafficTxReassembler = OpenQspAprsReassembler();
   final Map<String, _CompletedOpenQspTransaction>
   _completedOpenQspTransactions = {};
   static const OpenQspCodec _openQspCodec = OpenQspCodec();
@@ -137,20 +140,215 @@ class TncSettingsController extends ChangeNotifier {
       .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
       .join(' ');
 
+  static String _trafficTimestamp() {
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    final millis = now.millisecond.toString().padLeft(3, '0');
+    return '${two(now.hour)}:${two(now.minute)}:${two(now.second)}.$millis';
+  }
+
   static void _debugColor(String message, String color) {
-    if (kDebugMode) debugPrint('$color$message$_ansiReset');
+    if (kDebugMode) {
+      debugPrint('$color${_trafficTimestamp()} $message$_ansiReset');
+    }
   }
 
   bool _isLocalAprsPacket(AprsPacket packet) {
     final local = _localAprsIdentity;
     if (local == null) return false;
-    if (packet.frame.source.toString() == local) return true;
     return switch (packet) {
       AprsTextMessage(:final addressee) => addressee == local,
       AprsAck(:final addressee) => addressee == local,
       AprsReject(:final addressee) => addressee == local,
-      AprsUnknown() || AprsInvalid() => false,
+      AprsUnknown() || AprsInvalid() =>
+        packet.frame.destination.toString() == local,
     };
+  }
+
+  static String _singleLine(String value) =>
+      value.replaceAll('\r', ' ').replaceAll('\n', ' ').trim();
+
+  static String _trafficType(AprsPacket packet) => switch (packet) {
+    AprsTextMessage(:final text) when text.startsWith('Q1:') => 'OPENQSP',
+    AprsTextMessage() => 'MESSAGE',
+    AprsAck() => 'ACK',
+    AprsReject() => 'REJECT',
+    AprsUnknown(:final typeIdentifier) => switch (typeIdentifier) {
+      '!' || '=' || '/' || '@' => 'POSITION',
+      '_' => 'WEATHER',
+      '>' => 'STATUS',
+      'T' => 'TELEMETRY',
+      ';' => 'OBJECT',
+      _ => 'APRS/$typeIdentifier',
+    },
+    AprsInvalid() => 'INVALID',
+  };
+
+  String _trafficContent(AprsPacket packet, {required bool transmitted}) {
+    return switch (packet) {
+      AprsTextMessage(:final text) when text.startsWith('Q1:') =>
+        _humanizeOpenQspAprs(packet, transmitted: transmitted),
+      AprsTextMessage(:final text, :final messageId) =>
+        messageId == null ? text : '$text [message id $messageId]',
+      AprsAck(:final messageId) => 'message $messageId acknowledged',
+      AprsReject(:final messageId) => 'message $messageId rejected',
+      AprsUnknown() => _humanizeAprsUnknown(packet),
+      AprsInvalid(:final reason) => 'invalid APRS packet: $reason',
+    };
+  }
+
+  String _humanizeOpenQspAprs(
+    AprsTextMessage packet, {
+    required bool transmitted,
+  }) {
+    try {
+      final fragment = parseFragment(packet.text);
+      final reassembler = transmitted
+          ? _trafficTxReassembler
+          : _trafficRxReassembler;
+      final bytes = reassembler.add(
+        peer: packet.frame.source.toString(),
+        fragment: fragment,
+        now: DateTime.now().toUtc(),
+      );
+      if (bytes == null) {
+        return 'fragment ${fragment.index + 1}/${fragment.total} '
+            '(transaction ${fragment.transactionId})';
+      }
+      final decoded = _openQspCodec.decode(bytes);
+      return _describeOpenQspObject(decoded.object);
+    } on Object {
+      return 'unrecognized OpenQSP data: ${packet.text}';
+    }
+  }
+
+  static String _describeOpenQspObject(OpenQspFrameObject object) => switch (object) {
+    OpenQspSendMessage(:final recipient, :final body) =>
+      'send message to $recipient: "$body"',
+    OpenQspGetNewMessages(:final since, :final max) =>
+      'request new messages since $since (max $max)',
+    OpenQspGetNewBulletins(:final since, :final max) =>
+      'request new bulletins since $since (max $max)',
+    OpenQspGetBulletin(:final sequence) => 'request bulletin $sequence',
+    OpenQspGetCapabilities() => 'request server capabilities',
+    OpenQspMessage(:final author, :final recipient, :final body, :final sequence) =>
+      'message #$sequence from $author to $recipient: "$body"',
+    OpenQspBulletinHeader(:final author, :final title, :final sequence) =>
+      'bulletin #$sequence by $author: "$title"',
+    OpenQspBulletin(:final author, :final title, :final body, :final sequence) =>
+      'bulletin #$sequence by $author: "$title" — $body',
+    OpenQspEnd(:final returnedCount, :final hasMore, :final nextSince) =>
+      'end of response: $returnedCount returned, next=$nextSince, '
+          'more=${hasMore ? 'yes' : 'no'}',
+    OpenQspStored() => 'stored by OpenQSP server',
+    OpenQspError(:final errorCode, :final detail) =>
+      'OpenQSP error $errorCode${detail.isEmpty ? '' : ': $detail'}',
+    OpenQspCapabilities(:final protocolVersion, :final capabilities) =>
+      'server capabilities: protocol v$protocolVersion, mask $capabilities',
+  };
+
+  static String _humanizeAprsUnknown(AprsUnknown packet) {
+    final info = packet.frame.informationText;
+    if (info.isEmpty) return '(empty APRS payload)';
+    return switch (packet.typeIdentifier) {
+      '!' || '=' => _humanizePosition(info.substring(1)),
+      '/' || '@' => info.length > 8
+          ? _humanizePosition(info.substring(8))
+          : _singleLine(info),
+      '_' => _humanizeWeather(info.substring(1)),
+      '>' => 'status: ${_singleLine(info.substring(1))}',
+      'T' => 'telemetry: ${_singleLine(info.substring(1))}',
+      ';' => 'object: ${_singleLine(info.substring(1))}',
+      _ => _singleLine(info),
+    };
+  }
+
+  static String _humanizePosition(String payload) {
+    final match = RegExp(
+      r'^(\d{2})(\d{2}\.\d{2})([NS])(.)(\d{3})(\d{2}\.\d{2})([EW])(.)(.*)$',
+    ).firstMatch(payload);
+    if (match == null) return 'position data: ${_singleLine(payload)}';
+
+    final latDegrees = int.parse(match.group(1)!);
+    final latMinutes = double.parse(match.group(2)!);
+    final lonDegrees = int.parse(match.group(5)!);
+    final lonMinutes = double.parse(match.group(6)!);
+    var latitude = latDegrees + latMinutes / 60;
+    var longitude = lonDegrees + lonMinutes / 60;
+    if (match.group(3) == 'S') latitude = -latitude;
+    if (match.group(7) == 'W') longitude = -longitude;
+    final comment = match.group(9) ?? '';
+    final weather = _weatherFields(comment);
+    final suffix = weather.isNotEmpty
+        ? ' · $weather'
+        : comment.isEmpty
+        ? ''
+        : ' · ${_singleLine(comment)}';
+    return 'lat ${latitude.toStringAsFixed(5)}, lon ${longitude.toStringAsFixed(5)}$suffix';
+  }
+
+  static String _humanizeWeather(String payload) {
+    var data = payload;
+    final timestamp = RegExp(r'^\d{6}[zZhH/]').firstMatch(data);
+    if (timestamp != null) data = data.substring(timestamp.end);
+    final fields = _weatherFields(data);
+    return fields.isEmpty ? 'weather data: ${_singleLine(payload)}' : fields;
+  }
+
+  static String _weatherFields(String data) {
+    final parts = <String>[];
+    final temperature = RegExp(r't(-?\d{3})').firstMatch(data);
+    if (temperature != null) {
+      final fahrenheit = int.tryParse(temperature.group(1)!);
+      if (fahrenheit != null) {
+        final celsius = (fahrenheit - 32) * 5 / 9;
+        parts.add('temperature ${celsius.toStringAsFixed(1)} °C (${fahrenheit} °F)');
+      }
+    }
+    final humidity = RegExp(r'h(\d{2})').firstMatch(data);
+    if (humidity != null) {
+      final value = humidity.group(1) == '00' ? 100 : int.parse(humidity.group(1)!);
+      parts.add('humidity $value%');
+    }
+    final pressure = RegExp(r'b(\d{5})').firstMatch(data);
+    if (pressure != null) {
+      parts.add('pressure ${(int.parse(pressure.group(1)!) / 10).toStringAsFixed(1)} hPa');
+    }
+    final wind = RegExp(r'c(\d{3})s(\d{3})').firstMatch(data);
+    if (wind != null) {
+      parts.add('wind ${int.parse(wind.group(1)!)}° at ${int.parse(wind.group(2)!)} kt');
+    }
+    final gust = RegExp(r'g(\d{3})').firstMatch(data);
+    if (gust != null) parts.add('gust ${int.parse(gust.group(1)!)} kt');
+    return parts.join(', ');
+  }
+
+  void _debugTraffic(AprsPacket packet, {required bool transmitted}) {
+    final color = transmitted
+        ? _ansiRed
+        : _isLocalAprsPacket(packet)
+        ? _ansiGreen
+        : _ansiBlue;
+    final source = packet.frame.source;
+    final destination = switch (packet) {
+      AprsTextMessage(:final addressee) => addressee,
+      AprsAck(:final addressee) => addressee,
+      AprsReject(:final addressee) => addressee,
+      AprsUnknown() || AprsInvalid() => packet.frame.destination.toString(),
+    };
+    final content = _singleLine(
+      _trafficContent(packet, transmitted: transmitted),
+    );
+    final ingress = transmitted
+        ? ''
+        : packet.igate == null
+        ? ' | RF DIRECT'
+        : ' | IGATE ${packet.igate}';
+    _debugColor(
+      '${transmitted ? 'TX' : 'RX'} $source -> $destination$ingress | '
+      '${_trafficType(packet)} | $content',
+      color,
+    );
   }
 
   void _decodeAx25(List<int> payload) {
@@ -160,11 +358,6 @@ class TncSettingsController extends ChangeNotifier {
       _ax25Activity.insert(0, _describeAx25(frame));
       if (_ax25Activity.length > 10) _ax25Activity.removeLast();
       _decodeAprs(frame);
-      if (kDebugMode) {
-        debugPrint(
-          'AX.25 frame decoded: ${frame.source} > ${frame.destination}',
-        );
-      }
     } on Ax25DecodeException catch (error) {
       ax25DecodeErrors++;
       _debugColor('AX.25 decode error: ${error.message}', _ansiRed);
@@ -173,11 +366,18 @@ class TncSettingsController extends ChangeNotifier {
 
   void _decodeAprs(Ax25Frame frame) {
     final packet = _aprsParser.parse(frame);
-    if (packet == null) return;
+    if (packet == null) {
+      _debugColor(
+        'RX ${frame.source} -> ${frame.destination} | RF DIRECT | AX25 | '
+        '${_singleLine(frame.informationText)}',
+        _ansiBlue,
+      );
+      return;
+    }
     rxAprsPackets++;
     if (packet is AprsInvalid) {
       aprsParseErrors++;
-      _debugColor(_aprsLog(packet), _ansiRed);
+      _debugTraffic(packet, transmitted: false);
       return;
     }
     switch (packet) {
@@ -208,11 +408,7 @@ class TncSettingsController extends ChangeNotifier {
     }
     _aprsActivity.insert(0, _describeAprs(packet));
     if (_aprsActivity.length > 10) _aprsActivity.removeLast();
-    if (_isLocalAprsPacket(packet)) {
-      _debugColor(_aprsLog(packet), _ansiCyan);
-    } else if (kDebugMode) {
-      debugPrint(_aprsLog(packet));
-    }
+    _debugTraffic(packet, transmitted: false);
   }
 
   Future<void> _sendAprsAck(String messageId) async {
@@ -400,7 +596,7 @@ class TncSettingsController extends ChangeNotifier {
       });
     } on Object catch (error) {
       _finishOpenQspCheck(OpenQspCheckState.error);
-      _debugColor('OpenQSP APRS TX error: $error', _ansiRed);
+      _debugColor('OpenQsp APRS TX error: $error', _ansiRed);
     }
   }
 
@@ -420,19 +616,6 @@ class TncSettingsController extends ChangeNotifier {
       AprsInvalid() => '',
     };
   }
-
-  static String _aprsLog(AprsPacket packet) => switch (packet) {
-    AprsTextMessage(:final addressee, :final messageId) =>
-      'APRS message decoded: ${packet.frame.source} -> $addressee '
-          'id=${messageId ?? '-'}',
-    AprsAck(:final addressee, :final messageId) =>
-      'APRS ACK decoded: ${packet.frame.source} -> $addressee id=$messageId',
-    AprsReject(:final addressee, :final messageId) =>
-      'APRS REJ decoded: ${packet.frame.source} -> $addressee id=$messageId',
-    AprsUnknown(:final typeIdentifier) =>
-      'APRS packet decoded: ${packet.frame.source} type=$typeIdentifier',
-    AprsInvalid(:final reason) => 'APRS parse error: $reason',
-  };
 
   static String _describeAx25(Ax25Frame frame) {
     final via = frame.digipeaters.isEmpty
@@ -460,7 +643,13 @@ class TncSettingsController extends ChangeNotifier {
         final ax25 = _ax25Decoder.decode(frame.payload);
         final aprs = _aprsParser.parse(ax25);
         if (aprs != null) {
-          _debugColor('TX ${_aprsLog(aprs)}', _ansiCyan);
+          _debugTraffic(aprs, transmitted: true);
+        } else {
+          _debugColor(
+            'TX ${ax25.source} -> ${ax25.destination} | AX25 | '
+            '${_singleLine(ax25.informationText)}',
+            _ansiRed,
+          );
         }
       } on Object {
         // TX diagnostics must never affect transport behavior.
