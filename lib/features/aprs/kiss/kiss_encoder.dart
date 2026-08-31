@@ -1,7 +1,5 @@
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart';
-
 import 'kiss_frame.dart';
 
 const kissFend = 0xc0;
@@ -19,12 +17,7 @@ final class KissEncoder {
       _addEscaped(result, byte);
     }
     result.addByte(kissFend);
-    final encoded = result.takeBytes();
-    assert(() {
-      debugPrint('KISS frame encoded: ${encoded.length} bytes');
-      return true;
-    }());
-    return encoded;
+    return result.takeBytes();
   }
 
   void _addEscaped(BytesBuilder target, int byte) {
