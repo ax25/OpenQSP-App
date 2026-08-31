@@ -125,10 +125,18 @@ final class AprsMessagesTransport
       final pending = id == null ? null : _pendingByAprsMessageId[id];
       if (pending != null && !pending.stored) {
         _pendingByAprsMessageId.remove(id);
-        final attemptComplete = pending.acknowledge(id);
-        if (attemptComplete && pending.hasBeenTransmitted) {
-          _markStored(pending);
+        if (pending.commitAckAttempt && id!.startsWith('C')) {
+          final attemptComplete = pending.acknowledge(id);
+          if (attemptComplete && pending.hasBeenTransmitted) {
+            _markStored(pending);
+          } else {
+            _setPendingStatus(pending, MessageDeliveryStatus.processing);
+            pending.touch(responseTimeout, () => _timeoutPending(pending));
+          }
         } else {
+          // Legacy APRS ACK only proves that this transport packet reached the
+          // server. Durable SEND_MESSAGE confirmation still comes from STORED.
+          pending.forgetAck(id!);
           _setPendingStatus(pending, MessageDeliveryStatus.processing);
           pending.touch(responseTimeout, () => _timeoutPending(pending));
         }
@@ -236,7 +244,11 @@ final class AprsMessagesTransport
 
   _PendingSend? _oldestPendingStoredConfirmation() {
     for (final pending in _pendingStoredOrder) {
-      if (!pending.stored && pending.hasBeenTransmitted) return pending;
+      if (!pending.stored &&
+          pending.hasBeenTransmitted &&
+          !pending.commitAckAttempt) {
+        return pending;
+      }
     }
     return null;
   }
@@ -438,11 +450,12 @@ final class AprsMessagesTransport
     _setPendingStatus(pending, MessageDeliveryStatus.processing);
     final core = _codec.encode(pending.request);
     final fragments = fragmentFrame(core, pending.transactionId);
+    final commitAck = session.supportsAprsCommitAck;
     _pendingByAprsMessageId.removeWhere((_, value) => identical(value, pending));
-    pending.beginAttempt();
+    pending.beginAttempt(commitAck: commitAck);
     pending.hasBeenTransmitted = true;
     for (final fragment in fragments) {
-      final messageId = _allocateAprsMessageId();
+      final messageId = _allocateAprsMessageId(commitAck: commitAck);
       _pendingByAprsMessageId[messageId] = pending;
       pending.expectAck(messageId);
       final information = _messageEncoder.encode(
@@ -482,10 +495,11 @@ final class AprsMessagesTransport
     return result.future;
   }
 
-  String _allocateAprsMessageId() {
+  String _allocateAprsMessageId({required bool commitAck}) {
     for (var attempt = 0; attempt < 36 * 36; attempt++) {
       final value = _nextAprsMessageId++ % (36 * 36);
-      final candidate = value.toRadixString(36).toUpperCase().padLeft(2, '0');
+      final base = value.toRadixString(36).toUpperCase().padLeft(2, '0');
+      final candidate = commitAck ? 'C$base' : base;
       if (!_pendingByAprsMessageId.containsKey(candidate)) return candidate;
     }
     throw StateError('APRS message ID space exhausted');
@@ -582,8 +596,12 @@ final class _PendingSend {
   bool hasBeenTransmitted = false;
   bool queuedOrTransmitting = false;
   bool stored = false;
+  bool commitAckAttempt = false;
 
-  void beginAttempt() => _awaitingAprsAcks.clear();
+  void beginAttempt({required bool commitAck}) {
+    _awaitingAprsAcks.clear();
+    commitAckAttempt = commitAck;
+  }
 
   void expectAck(String messageId) => _awaitingAprsAcks.add(messageId);
 
@@ -592,9 +610,14 @@ final class _PendingSend {
     return removed && _awaitingAprsAcks.isEmpty;
   }
 
+  void forgetAck(String messageId) => _awaitingAprsAcks.remove(messageId);
+
   void rejectAttempt() => _awaitingAprsAcks.clear();
 
-  void clearAttempt() => _awaitingAprsAcks.clear();
+  void clearAttempt() {
+    _awaitingAprsAcks.clear();
+    commitAckAttempt = false;
+  }
 
   void touch(Duration timeout, void Function() onTimeout) {
     if (stored) return;
