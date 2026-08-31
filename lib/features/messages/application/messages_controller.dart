@@ -25,6 +25,7 @@ class MessagesController extends ChangeNotifier {
   final List<ConversationSummary> conversations = [];
   final Map<String, InternetMessage> _messagesById = {};
   final Map<String, int> _unreadByPeer = {};
+  final Map<String, MessageDeliveryStatus> _earlySendStatuses = {};
   StreamSubscription<MessagingEvent>? _events;
   StreamSubscription<RealtimeConnectionState>? _connections;
   Future<void>? _reconcileInFlight;
@@ -76,7 +77,25 @@ class MessagesController extends ChangeNotifier {
     notifyListeners();
     try {
       _messagesById.clear();
-      _mergeAll(await localStore.messages(callsign));
+      final local = await localStore.messages(callsign);
+      final recovered = <InternetMessage>[];
+      final changed = <InternetMessage>[];
+      for (final message in local) {
+        if (message.id.startsWith('aprs-local-') &&
+            message.deliveryStatus == MessageDeliveryStatus.processing) {
+          final retryable = message.copyWith(
+            deliveryStatus: MessageDeliveryStatus.retry,
+          );
+          recovered.add(retryable);
+          changed.add(retryable);
+        } else {
+          recovered.add(message);
+        }
+      }
+      if (changed.isNotEmpty) {
+        await localStore.upsertAll(callsign, changed);
+      }
+      _mergeAll(recovered);
     } on Object catch (value) {
       error = value.toString();
     } finally {
@@ -204,9 +223,14 @@ class MessagesController extends ChangeNotifier {
       text: trimmed,
       token: token,
     );
-    await localStore.upsert(callsign, message);
-    _merge(message);
+    final earlyStatus = _earlySendStatuses.remove(message.id);
+    final resolved = earlyStatus != null &&
+            _statusRank(earlyStatus) >= _statusRank(message.deliveryStatus)
+        ? message.copyWith(deliveryStatus: earlyStatus)
+        : message;
+    _merge(resolved);
     notifyListeners();
+    await localStore.upsert(callsign, resolved);
   }
 
   Future<void> retryMessage(String messageId) async {
@@ -224,7 +248,7 @@ class MessagesController extends ChangeNotifier {
     _rebuildConversations();
     notifyListeners();
     try {
-      await (retryable as RetryableMessagesRepository).retryMessage(messageId);
+      await (retryable as RetryableMessagesRepository).retryMessage(current);
     } on Object {
       final failed = updated.copyWith(deliveryStatus: MessageDeliveryStatus.retry);
       _messagesById[messageId] = failed;
@@ -268,14 +292,22 @@ class MessagesController extends ChangeNotifier {
         await _applyReadCursor(_key(peer), lastReadMessageId);
       case MessageSendStatusChanged(:final messageId, :final status):
         final current = _messagesById[messageId];
-        if (current != null &&
-            _statusRank(status) >= _statusRank(current.deliveryStatus)) {
+        if (current == null) {
+          final previous = _earlySendStatuses[messageId];
+          if (previous == null ||
+              _statusRank(status) >= _statusRank(previous) ||
+              ((status == MessageDeliveryStatus.processing ||
+                      status == MessageDeliveryStatus.retry) &&
+                  (previous == MessageDeliveryStatus.processing ||
+                      previous == MessageDeliveryStatus.retry))) {
+            _earlySendStatuses[messageId] = status;
+          }
+        } else if (_statusRank(status) >= _statusRank(current.deliveryStatus)) {
           final updated = current.copyWith(deliveryStatus: status);
           _messagesById[messageId] = updated;
           await localStore.upsert(callsign, updated);
           _rebuildConversations();
-        } else if (current != null &&
-            (status == MessageDeliveryStatus.processing ||
+        } else if ((status == MessageDeliveryStatus.processing ||
                 status == MessageDeliveryStatus.retry) &&
             (current.deliveryStatus == MessageDeliveryStatus.processing ||
                 current.deliveryStatus == MessageDeliveryStatus.retry)) {

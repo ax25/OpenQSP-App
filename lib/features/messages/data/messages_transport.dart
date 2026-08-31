@@ -23,7 +23,7 @@ abstract interface class MessagesRepository {
 }
 
 abstract interface class RetryableMessagesRepository {
-  Future<void> retryMessage(String messageId);
+  Future<void> retryMessage(InternetMessage message);
 }
 
 /// Optional capability for repositories whose incremental cursor is not the

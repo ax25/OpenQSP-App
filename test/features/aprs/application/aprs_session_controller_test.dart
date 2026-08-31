@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_codec.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_models.dart';
+import 'package:openqsp_app/features/aprs/aprs/aprs_message_encoder.dart';
 import 'package:openqsp_app/features/aprs/application/aprs_session_controller.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
@@ -10,6 +13,7 @@ import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_storage.dart';
 import 'package:openqsp_app/features/aprs/domain/tnc_device.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
+import 'package:openqsp_app/features/aprs/openqsp_carriage/openqsp_aprs_carriage.dart';
 
 const _device = TncDevice(id: '00:11:22:33:44:55', name: 'TNC');
 
@@ -61,8 +65,24 @@ final class _Service implements BluetoothTncService {
     sentBytes.add(List<int>.from(data));
   }
 
-  void receiveCapabilities() {
-    final ax25 = const Ax25Encoder().encodeUi(
+  void receiveCapabilities({bool commitAck = false}) {
+    const codec = OpenQspCodec();
+    const messageEncoder = AprsMessageEncoder();
+    const ax25Encoder = Ax25Encoder();
+    const kissEncoder = KissEncoder();
+    final core = codec.encode(
+      OpenQspCapabilities(
+        protocolVersion: 1,
+        capabilities: commitAck ? 0x1f : 0x0f,
+      ),
+    );
+    final fragment = fragmentFrame(core, 'ABC').single;
+    final information = messageEncoder.encode(
+      addressee: 'EA3GNU',
+      body: fragment.body,
+      messageId: '00',
+    );
+    final ax25 = ax25Encoder.encodeUi(
       destination: const Ax25Address(
         callsign: 'APOQSP',
         ssid: 0,
@@ -75,13 +95,10 @@ final class _Service implements BluetoothTncService {
         hasBeenRepeated: false,
         isLast: true,
       ),
-      information:
-          ':EA3GNU   :Q1:ABC:00/01:AUYABQEAAAAP{00'.codeUnits,
+      information: information,
     );
     _incoming.add(
-      const KissEncoder().encode(
-        KissFrame(port: 0, command: 0, payload: ax25),
-      ),
+      kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
     );
   }
 }
@@ -178,6 +195,16 @@ void main() {
     expect(session.state, AprsSessionState.slow);
     expect(session.serverReachable, isTrue);
     expect(session.statusLabel, 'APRS Server Connection Slow');
+  });
+
+  test('CAPABILITIES advertises APRS commit ACK support', () async {
+    await session.activate();
+    service.receiveCapabilities(commitAck: true);
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.serverCapabilities, 0x1f);
+    expect(session.supportsAprsCommitAck, isTrue);
   });
 }
 
