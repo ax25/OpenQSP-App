@@ -23,6 +23,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
   final _composer = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
+  final Set<String> _hiddenMessageIds = {};
   bool _loading = true;
   String? _error;
   int _messageCount = 0;
@@ -49,7 +50,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     if (!mounted) return;
     _messageCount = widget.controller.historyFor(widget.remoteCallsign).length;
     setState(() => _loading = false);
-    _scrollToLatest();
+    _scrollToLatest(immediate: true);
   }
 
   void _changed() {
@@ -80,15 +81,29 @@ class _ConversationScreenState extends State<ConversationScreen> {
     setState(() {});
   }
 
-  void _scrollToLatest() {
+  void _scrollToLatest({bool immediate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
+      final target = _scrollController.position.maxScrollExtent;
+      if (immediate) {
+        _scrollController.jumpTo(target);
+        return;
+      }
       _scrollController.animateTo(
-        _scrollController.position.maxScrollExtent,
+        target,
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOut,
       );
     });
+  }
+
+  void _clearVisibleMessages() {
+    final messages = widget.controller.historyFor(widget.remoteCallsign);
+    if (messages.isEmpty) return;
+    setState(() {
+      _hiddenMessageIds.addAll(messages.map((message) => message.id));
+    });
+    _composerFocus.requestFocus();
   }
 
   Future<void> _send() async {
@@ -98,6 +113,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
       widget.remoteCallsign,
     );
     if (sending || text.isEmpty || text.length > maximumMessageLength) return;
+    _composerFocus.requestFocus();
     setState(() => _error = null);
     try {
       await pendingMessageComposer.send(
@@ -127,13 +143,25 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final messages = widget.controller.historyFor(widget.remoteCallsign);
+    final allMessages = widget.controller.historyFor(widget.remoteCallsign);
+    final messages = allMessages
+        .where((message) => !_hiddenMessageIds.contains(message.id))
+        .toList(growable: false);
     final sending = pendingMessageComposer.isSending(
       widget.controller,
       widget.remoteCallsign,
     );
     return Scaffold(
-      appBar: AppBar(title: Text(widget.remoteCallsign)),
+      appBar: AppBar(
+        title: Text(widget.remoteCallsign),
+        actions: [
+          TextButton(
+            key: const Key('clearMessages'),
+            onPressed: messages.isEmpty ? null : _clearVisibleMessages,
+            child: const Text('Vaciar mensajes'),
+          ),
+        ],
+      ),
       body: Column(children: [
         if (_error != null)
           MaterialBanner(
@@ -250,11 +278,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
                   focusNode: _composerFocus,
                   readOnly: sending,
                   maxLength: maximumMessageLength,
+                  textInputAction: TextInputAction.send,
                   inputFormatters: [
                     LengthLimitingTextInputFormatter(maximumMessageLength),
                   ],
                   decoration: const InputDecoration(labelText: 'Message'),
-                  onSubmitted: (_) => _send(),
+                  onSubmitted: (_) {
+                    _composerFocus.requestFocus();
+                    _send();
+                  },
                 ),
               ),
               const SizedBox(width: 8),
