@@ -6,6 +6,7 @@ import '../../../core/openqsp_protocol/openqsp_codec.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../../aprs/aprs/aprs_message_encoder.dart';
+import '../../aprs/aprs/aprs_packet.dart';
 import '../../aprs/application/aprs_session_controller.dart';
 import '../../aprs/application/tnc_settings_controller.dart';
 import '../../aprs/ax25/ax25_address.dart';
