@@ -76,7 +76,25 @@ class MessagesController extends ChangeNotifier {
     notifyListeners();
     try {
       _messagesById.clear();
-      _mergeAll(await localStore.messages(callsign));
+      final local = await localStore.messages(callsign);
+      final recovered = <InternetMessage>[];
+      final changed = <InternetMessage>[];
+      for (final message in local) {
+        if (message.id.startsWith('aprs-local-') &&
+            message.deliveryStatus == MessageDeliveryStatus.processing) {
+          final retryable = message.copyWith(
+            deliveryStatus: MessageDeliveryStatus.retry,
+          );
+          recovered.add(retryable);
+          changed.add(retryable);
+        } else {
+          recovered.add(message);
+        }
+      }
+      if (changed.isNotEmpty) {
+        await localStore.upsertAll(callsign, changed);
+      }
+      _mergeAll(recovered);
     } on Object catch (value) {
       error = value.toString();
     } finally {
@@ -224,7 +242,7 @@ class MessagesController extends ChangeNotifier {
     _rebuildConversations();
     notifyListeners();
     try {
-      await (retryable as RetryableMessagesRepository).retryMessage(messageId);
+      await (retryable as RetryableMessagesRepository).retryMessage(current);
     } on Object {
       final failed = updated.copyWith(deliveryStatus: MessageDeliveryStatus.retry);
       _messagesById[messageId] = failed;
