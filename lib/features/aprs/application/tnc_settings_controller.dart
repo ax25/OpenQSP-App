@@ -140,8 +140,17 @@ class TncSettingsController extends ChangeNotifier {
       .map((byte) => byte.toRadixString(16).padLeft(2, '0').toUpperCase())
       .join(' ');
 
+  static String _trafficTimestamp() {
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    final millis = now.millisecond.toString().padLeft(3, '0');
+    return '${two(now.hour)}:${two(now.minute)}:${two(now.second)}.$millis';
+  }
+
   static void _debugColor(String message, String color) {
-    if (kDebugMode) debugPrint('$color$message$_ansiReset');
+    if (kDebugMode) {
+      debugPrint('$color${_trafficTimestamp()} $message$_ansiReset');
+    }
   }
 
   bool _isLocalAprsPacket(AprsPacket packet) {
@@ -330,8 +339,13 @@ class TncSettingsController extends ChangeNotifier {
     final content = _singleLine(
       _trafficContent(packet, transmitted: transmitted),
     );
+    final ingress = transmitted
+        ? ''
+        : packet.igate == null
+        ? ' | RF DIRECT'
+        : ' | IGATE ${packet.igate}';
     _debugColor(
-      '${transmitted ? 'TX' : 'RX'} $source -> $destination | '
+      '${transmitted ? 'TX' : 'RX'} $source -> $destination$ingress | '
       '${_trafficType(packet)} | $content',
       color,
     );
@@ -354,7 +368,7 @@ class TncSettingsController extends ChangeNotifier {
     final packet = _aprsParser.parse(frame);
     if (packet == null) {
       _debugColor(
-        'RX ${frame.source} -> ${frame.destination} | AX25 | '
+        'RX ${frame.source} -> ${frame.destination} | RF DIRECT | AX25 | '
         '${_singleLine(frame.informationText)}',
         _ansiBlue,
       );
@@ -582,7 +596,7 @@ class TncSettingsController extends ChangeNotifier {
       });
     } on Object catch (error) {
       _finishOpenQspCheck(OpenQspCheckState.error);
-      _debugColor('OpenQSP APRS TX error: $error', _ansiRed);
+      _debugColor('OpenQsp APRS TX error: $error', _ansiRed);
     }
   }
 
