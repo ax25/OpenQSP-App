@@ -98,7 +98,7 @@ void main() {
     await service.losses.close();
   });
 
-  test('send returns processing immediately and later STORED advances it', () async {
+  test('send returns processing immediately and commit ACK advances it', () async {
     final storedEvent = transport.events
         .where(
           (value) =>
@@ -122,7 +122,7 @@ void main() {
 
     await Future<void>.delayed(Duration.zero);
     expect(service.sentBytes, isNotEmpty);
-    _injectObject(service, const OpenQspStored(), transactionId: '001');
+    _injectAck(service, messageId: '00');
 
     final update = await storedEvent;
     expect(update.messageId, message.id);
@@ -130,7 +130,7 @@ void main() {
     expect(history.single.deliveryStatus, MessageDeliveryStatus.stored);
   });
 
-  test('late APRS ACK restarts processing after timeout', () async {
+  test('late APRS commit ACK proves stored even after timeout', () async {
     final fastTransport = AprsMessagesTransport(
       session: session,
       callsign: 'EA3GNU',
@@ -161,7 +161,7 @@ void main() {
     _injectAck(service, messageId: '00');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
-    expect(statuses.last, MessageDeliveryStatus.processing);
+    expect(statuses.last, MessageDeliveryStatus.stored);
   });
 
   test('unsolicited MESSAGE becomes a realtime received event', () async {
