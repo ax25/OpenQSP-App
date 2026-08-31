@@ -143,7 +143,7 @@ void main() {
     await sync;
   });
 
-  test('two queued sends consume STORED confirmations in send order', () async {
+  test('two queued sends are stored only by their own commit ACK', () async {
     var sequence = 0;
     final ids = ['A01', 'B01'];
     final transport = await buildTransport(
@@ -173,7 +173,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
-    _injectObject(service, const OpenQspStored(), transactionId: '910');
+    _injectAck(service, messageId: '00');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
@@ -183,13 +183,16 @@ void main() {
     expect(storedAfterFirst, hasLength(1));
     expect(storedAfterFirst.single.messageId, first.id);
 
+    // A duplicate ACK for A must not advance B.
+    _injectAck(service, messageId: '00');
+    await Future<void>.delayed(Duration.zero);
     final midway = await transport.messages(callsign: 'EA3GNU', token: '');
     expect(
       midway.firstWhere((message) => message.id == second.id).deliveryStatus,
       MessageDeliveryStatus.processing,
     );
 
-    _injectObject(service, const OpenQspStored(), transactionId: '911');
+    _injectAck(service, messageId: '01');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
@@ -198,6 +201,38 @@ void main() {
         .map((event) => event.messageId)
         .toList();
     expect(stored, [first.id, second.id]);
+  });
+
+  test('late commit ACK after timeout still proves the message is stored', () async {
+    final transport = await buildTransport(
+      responseTimeout: const Duration(milliseconds: 40),
+      transactionIdFactory: () => 'LATE',
+    );
+    addTearDown(transport.close);
+
+    final message = await transport.send(
+      callsign: 'EA3GNU',
+      remoteCallsign: 'EA3ABC',
+      text: 'late durable ack',
+      token: '',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 70));
+
+    var history = await transport.messages(callsign: 'EA3GNU', token: '');
+    expect(
+      history.singleWhere((value) => value.id == message.id).deliveryStatus,
+      MessageDeliveryStatus.retry,
+    );
+
+    _injectAck(service, messageId: '00');
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    history = await transport.messages(callsign: 'EA3GNU', token: '');
+    expect(
+      history.singleWhere((value) => value.id == message.id).deliveryStatus,
+      MessageDeliveryStatus.stored,
+    );
   });
 
   test('retry reuses the same OpenQSP transaction id', () async {
@@ -249,6 +284,34 @@ void main() {
     final history = await transport.messages(callsign: 'EA3GNU', token: '');
     expect(history.single.id, restored.id);
   });
+}
+
+void _injectAck(_FakeTncService service, {required String messageId}) {
+  const messageEncoder = AprsMessageEncoder();
+  const ax25Encoder = Ax25Encoder();
+  const kissEncoder = KissEncoder();
+  final information = messageEncoder.encode(
+    addressee: 'EA3GNU',
+    body: 'ack$messageId',
+  );
+  final ax25 = ax25Encoder.encodeUi(
+    destination: const Ax25Address(
+      callsign: 'APOQSP',
+      ssid: 0,
+      hasBeenRepeated: false,
+      isLast: false,
+    ),
+    source: const Ax25Address(
+      callsign: 'OQSP',
+      ssid: 0,
+      hasBeenRepeated: false,
+      isLast: true,
+    ),
+    information: information,
+  );
+  service.bytes.add(
+    kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
+  );
 }
 
 void _injectObject(
