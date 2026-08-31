@@ -19,7 +19,8 @@ class ConversationScreen extends StatefulWidget {
   State<ConversationScreen> createState() => _ConversationScreenState();
 }
 
-class _ConversationScreenState extends State<ConversationScreen> {
+class _ConversationScreenState extends State<ConversationScreen>
+    with WidgetsBindingObserver {
   final _composer = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
@@ -27,12 +28,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
   bool _loading = true;
   String? _error;
   int _messageCount = 0;
+  bool _keepBottomVisibleDuringKeyboardResize = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_changed);
     pendingMessageComposer.addListener(_pendingComposerChanged);
+    _scrollController.addListener(_scrollChanged);
     final pendingText = pendingMessageComposer.textFor(
       widget.controller,
       widget.remoteCallsign,
@@ -81,6 +85,27 @@ class _ConversationScreenState extends State<ConversationScreen> {
     setState(() {});
   }
 
+  bool _isAtBottom() {
+    if (!_scrollController.hasClients) return true;
+    final position = _scrollController.position;
+    return position.maxScrollExtent - position.pixels <= 24;
+  }
+
+  void _prepareForKeyboard() {
+    _keepBottomVisibleDuringKeyboardResize = _isAtBottom();
+  }
+
+  void _scrollChanged() {
+    if (!_composerFocus.hasFocus) return;
+    _keepBottomVisibleDuringKeyboardResize = _isAtBottom();
+  }
+
+  @override
+  void didChangeMetrics() {
+    if (!_keepBottomVisibleDuringKeyboardResize) return;
+    _scrollToLatest(immediate: true);
+  }
+
   void _scrollToLatest({bool immediate = false}) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients) return;
@@ -113,6 +138,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
       widget.remoteCallsign,
     );
     if (sending || text.isEmpty || text.length > maximumMessageLength) return;
+    _keepBottomVisibleDuringKeyboardResize = true;
     _composerFocus.requestFocus();
     setState(() => _error = null);
     try {
@@ -133,8 +159,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_changed);
     pendingMessageComposer.removeListener(_pendingComposerChanged);
+    _scrollController.removeListener(_scrollChanged);
     _composer.dispose();
     _composerFocus.dispose();
     _scrollController.dispose();
@@ -283,7 +311,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
                     LengthLimitingTextInputFormatter(maximumMessageLength),
                   ],
                   decoration: const InputDecoration(labelText: 'Message'),
+                  onTap: _prepareForKeyboard,
                   onSubmitted: (_) {
+                    _keepBottomVisibleDuringKeyboardResize = true;
                     _composerFocus.requestFocus();
                     _send();
                   },
