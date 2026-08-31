@@ -29,6 +29,73 @@ abstract interface class MessagesRepository {
   Future<SyncBatch> sync({required String token, String? cursor});
 }
 
+class SessionAwareMessagesRepository
+    implements MessagesRepository, MessagesSyncCursorNamespace {
+  SessionAwareMessagesRepository({
+    required this.delegate,
+    required this.onAuthenticationRequired,
+  });
+
+  final MessagesRepository delegate;
+  final Future<void> Function() onAuthenticationRequired;
+
+  @override
+  String get syncCursorKey => messagesSyncCursorKey(delegate);
+
+  Future<T> _guard<T>(Future<T> Function() operation) async {
+    try {
+      return await operation();
+    } on MessagesAuthenticationException {
+      await onAuthenticationRequired();
+      rethrow;
+    }
+  }
+
+  @override
+  Future<List<InternetMessage>> messages({
+    required String callsign,
+    required String token,
+    String? withCallsign,
+  }) => _guard(
+    () => delegate.messages(
+      callsign: callsign,
+      token: token,
+      withCallsign: withCallsign,
+    ),
+  );
+
+  @override
+  Future<InternetMessage> send({
+    required String callsign,
+    required String remoteCallsign,
+    required String text,
+    required String token,
+  }) => _guard(
+    () => delegate.send(
+      callsign: callsign,
+      remoteCallsign: remoteCallsign,
+      text: text,
+      token: token,
+    ),
+  );
+
+  @override
+  Future<void> markConversationRead({
+    required String remoteCallsign,
+    required String token,
+  }) => _guard(
+    () => delegate.markConversationRead(
+      remoteCallsign: remoteCallsign,
+      token: token,
+    ),
+  );
+
+  @override
+  Future<SyncBatch> sync({required String token, String? cursor}) => _guard(
+    () => delegate.sync(token: token, cursor: cursor),
+  );
+}
+
 abstract interface class RetryableMessagesRepository {
   Future<void> retryMessage(InternetMessage message);
 }
