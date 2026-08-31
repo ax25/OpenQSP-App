@@ -1,5 +1,12 @@
 import '../domain/message_models.dart';
 
+class MessagesAuthenticationException implements Exception {
+  const MessagesAuthenticationException();
+
+  @override
+  String toString() => 'Message session authentication required';
+}
+
 abstract interface class MessagesRepository {
   Future<List<InternetMessage>> messages({
     required String callsign,
