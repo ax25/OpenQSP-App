@@ -236,9 +236,10 @@ void main() {
       MessageDeliveryStatus.retry,
     );
 
-    // This payload is large enough to produce two Q1 fragments. A commit-mode
-    // send is stored only after every fragment in the attempt has been ACKed.
+    // This payload produces two Q1 fragments. Model the two radio ACKs as
+    // distinct receive events so the transport observes both confirmations.
     _injectAck(service, messageId: 'C00');
+    await Future<void>.delayed(Duration.zero);
     _injectAck(service, messageId: 'C01');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
