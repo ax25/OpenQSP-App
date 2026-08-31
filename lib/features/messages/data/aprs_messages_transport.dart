@@ -127,6 +127,9 @@ final class AprsMessagesTransport
         _pendingByAprsMessageId.remove(id);
         final attemptComplete = pending.acknowledge(id);
         if (attemptComplete && pending.hasBeenTransmitted) {
+          // The server delays the ACK that completes a SEND_MESSAGE until the
+          // Core operation is durably accepted. Therefore ACKing every
+          // fragment in the current attempt is the APRS equivalent of STORED.
           _markStored(pending);
         } else {
           _setPendingStatus(pending, MessageDeliveryStatus.processing);
@@ -165,8 +168,6 @@ final class AprsMessagesTransport
     if (object == null) return;
 
     switch (object) {
-      // Compatibility with older servers. New APRS servers use the commit ACK
-      // of the request fragments instead of sending a separate STORED frame.
       case OpenQspStored():
         final pending = _oldestPendingStoredConfirmation();
         if (pending != null) _markStored(pending);
