@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../domain/tnc_connection_state.dart';
@@ -44,14 +43,7 @@ class AndroidBluetoothTncService implements BluetoothTncService {
   @override
   Stream<List<int>> get incomingBytes => _incomingBytes ??= _events
       .receiveBroadcastStream()
-      .map((value) {
-        final bytes = List<int>.unmodifiable((value as List).cast<int>());
-        assert(() {
-          debugPrint('Bluetooth RX bytes: ${bytes.length}');
-          return true;
-        }());
-        return bytes;
-      });
+      .map((value) => List<int>.unmodifiable((value as List).cast<int>()));
 
   @override
   int? get activeConnectionId => _activeConnectionId;
@@ -131,10 +123,6 @@ class AndroidBluetoothTncService implements BluetoothTncService {
       await _channel.invokeMethod<void>('write', {
         'bytes': Uint8List.fromList(data),
       });
-      assert(() {
-        debugPrint('Bluetooth TX bytes: ${data.length}');
-        return true;
-      }());
     } on PlatformException catch (error) {
       throw TncServiceException(_failure(error.code));
     }
