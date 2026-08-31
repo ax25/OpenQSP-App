@@ -9,4 +9,5 @@ abstract final class OpenQspCapability {
   static const int bulletinListing = 0x00000002;
   static const int bulletinRetrieval = 0x00000004;
   static const int proactivePrivateMessageDelivery = 0x00000008;
+  static const int aprsCommitAck = 0x00000010;
 }
