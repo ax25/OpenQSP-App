@@ -4,11 +4,12 @@ This document tracks known pending work for the OpenQSP client. It is intentiona
 
 ## Conversation UI
 
-- [ ] **Send behavior / keyboard / scroll**
-  - Sending a message must not hide the keyboard.
-  - The keyboard must remain visible after tapping Send or submitting from the IME.
-  - After the message is added to the conversation, the conversation must scroll far enough to show the **entire newest message bubble**, not merely move near the bottom.
-  - This behavior must remain correct for long outgoing messages and when the keyboard changes the viewport height.
+- [x] **Keyboard / bottom anchoring behavior**
+  - Opening a conversation positions the message list at the absolute bottom.
+  - If the user is already at the bottom when the composer/keyboard is opened, viewport resizing keeps the absolute bottom visible above the keyboard.
+  - If the user is reading older messages away from the bottom, opening the keyboard does not force-scroll the conversation.
+  - Sending keeps the composer focused and forces the newest sent message into view.
+  - Covered by widget tests for initial bottom position and both keyboard-resize cases.
 
 - [ ] **Persistently hide cleared messages**
   - `Vaciar mensajes` must hide the currently visible conversation history persistently for that client.
