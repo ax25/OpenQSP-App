@@ -195,7 +195,6 @@ void main() {
     expect(storedAfterFirst, hasLength(1));
     expect(storedAfterFirst.single.messageId, first.id);
 
-    // A duplicate ACK for A must not advance B.
     _injectAck(service, messageId: 'C00');
     await Future<void>.delayed(Duration.zero);
     final midway = await transport.messages(callsign: 'EA3GNU', token: '');
@@ -237,7 +236,10 @@ void main() {
       MessageDeliveryStatus.retry,
     );
 
+    // This payload is large enough to produce two Q1 fragments. A commit-mode
+    // send is stored only after every fragment in the attempt has been ACKed.
     _injectAck(service, messageId: 'C00');
+    _injectAck(service, messageId: 'C01');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
