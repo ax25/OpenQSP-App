@@ -120,39 +120,23 @@ final class AprsMessagesTransport
 
     final ackCount = _tnc.aprsAcks;
     if (ackCount != _lastObservedAprsAcks) {
+      final delta = ackCount - _lastObservedAprsAcks;
       _lastObservedAprsAcks = ackCount;
-      final id = _latestAprsResponseId();
-      final pending = id == null ? null : _pendingByAprsMessageId[id];
-      if (pending != null && !pending.stored) {
-        _pendingByAprsMessageId.remove(id);
-        if (pending.commitAckAttempt && id!.startsWith('C')) {
-          final attemptComplete = pending.acknowledge(id);
-          if (attemptComplete && pending.hasBeenTransmitted) {
-            _markStored(pending);
-          } else {
-            _setPendingStatus(pending, MessageDeliveryStatus.processing);
-            pending.touch(responseTimeout, () => _timeoutPending(pending));
-          }
-        } else {
-          // Legacy APRS ACK only proves that this transport packet reached the
-          // server. Durable SEND_MESSAGE confirmation still comes from STORED.
-          pending.forgetAck(id!);
-          _setPendingStatus(pending, MessageDeliveryStatus.processing);
-          pending.touch(responseTimeout, () => _timeoutPending(pending));
+      if (delta > 0) {
+        for (final id in _recentAprsResponseIds(kind: 'ACK', count: delta)) {
+          _handleAprsAck(id);
         }
       }
     }
 
     final rejectCount = _tnc.aprsRejects;
     if (rejectCount != _lastObservedAprsRejects) {
+      final delta = rejectCount - _lastObservedAprsRejects;
       _lastObservedAprsRejects = rejectCount;
-      final id = _latestAprsResponseId();
-      final pending = id == null ? null : _pendingByAprsMessageId[id];
-      if (pending != null && !pending.stored) {
-        _pendingByAprsMessageId.removeWhere((_, value) => identical(value, pending));
-        pending.rejectAttempt();
-        _setPendingStatus(pending, MessageDeliveryStatus.retry);
-        pending.cancelTimeout();
+      if (delta > 0) {
+        for (final id in _recentAprsResponseIds(kind: 'REJ', count: delta)) {
+          _handleAprsReject(id);
+        }
       }
     }
 
@@ -236,10 +220,53 @@ final class AprsMessagesTransport
     }
   }
 
-  String? _latestAprsResponseId() {
-    if (_tnc.aprsActivity.isEmpty) return null;
-    final match = _aprsResponseId.firstMatch(_tnc.aprsActivity.first);
-    return match?.group(1)?.toUpperCase();
+  List<String> _recentAprsResponseIds({
+    required String kind,
+    required int count,
+  }) {
+    final ids = <String>[];
+    for (final entry in _tnc.aprsActivity) {
+      if (!entry.contains('$kind  ')) continue;
+      final match = _aprsResponseId.firstMatch(entry);
+      final id = match?.group(1)?.toUpperCase();
+      if (id == null) continue;
+      ids.add(id);
+      if (ids.length == count) break;
+    }
+    return ids.reversed.toList(growable: false);
+  }
+
+  void _handleAprsAck(String id) {
+    final pending = _pendingByAprsMessageId[id];
+    if (pending == null || pending.stored) return;
+
+    _pendingByAprsMessageId.remove(id);
+    if (pending.commitAckAttempt && id.startsWith('C')) {
+      final attemptComplete = pending.acknowledge(id);
+      if (attemptComplete && pending.hasBeenTransmitted) {
+        _markStored(pending);
+      } else {
+        _setPendingStatus(pending, MessageDeliveryStatus.processing);
+        pending.touch(responseTimeout, () => _timeoutPending(pending));
+      }
+      return;
+    }
+
+    // Legacy APRS ACK only proves that this transport packet reached the
+    // server. Durable SEND_MESSAGE confirmation still comes from STORED.
+    pending.forgetAck(id);
+    _setPendingStatus(pending, MessageDeliveryStatus.processing);
+    pending.touch(responseTimeout, () => _timeoutPending(pending));
+  }
+
+  void _handleAprsReject(String id) {
+    final pending = _pendingByAprsMessageId[id];
+    if (pending == null || pending.stored) return;
+
+    _pendingByAprsMessageId.removeWhere((_, value) => identical(value, pending));
+    pending.rejectAttempt();
+    _setPendingStatus(pending, MessageDeliveryStatus.retry);
+    pending.cancelTimeout();
   }
 
   _PendingSend? _oldestPendingStoredConfirmation() {
