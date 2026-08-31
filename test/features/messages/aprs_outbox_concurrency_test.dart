@@ -218,7 +218,7 @@ void main() {
     await enableCommitAck();
     final transport = await buildTransport(
       responseTimeout: const Duration(milliseconds: 40),
-      transactionIdFactory: () => 'LATE',
+      transactionIdFactory: () => 'LAT',
     );
     addTearDown(transport.close);
 
