@@ -47,7 +47,17 @@ void main() {
       tester.widget<TextField>(composer).controller!.text,
       'still sending',
     );
-    expect(tester.widget<TextField>(composer).readOnly, isTrue);
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('sendMessage'))).onPressed,
+      isNull,
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('sendMessage')),
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsOneWidget,
+    );
 
     await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
     await tester.pump();
@@ -60,7 +70,10 @@ void main() {
       tester.widget<TextField>(reopenedComposer).controller!.text,
       'still sending',
     );
-    expect(tester.widget<TextField>(reopenedComposer).readOnly, isTrue);
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('sendMessage'))).onPressed,
+      isNull,
+    );
     expect(
       find.descendant(
         of: find.byKey(const Key('sendMessage')),
@@ -74,7 +87,10 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     expect(tester.widget<TextField>(reopenedComposer).controller!.text, isEmpty);
-    expect(tester.widget<TextField>(reopenedComposer).readOnly, isFalse);
+    expect(
+      tester.widget<IconButton>(find.byKey(const Key('sendMessage'))).onPressed,
+      isNotNull,
+    );
   });
 }
 
