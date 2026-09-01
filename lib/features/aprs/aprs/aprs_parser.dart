@@ -108,24 +108,11 @@ final class AprsParser {
     if (!_validId(id)) {
       return AprsInvalid(frame, igate: igate, reason: 'invalid message ID');
     }
-    final text = body.substring(0, marker);
-    if (text.startsWith('Q1:')) {
-      // Q1 owns reliability at the transaction level. Legacy APRS message IDs
-      // may still be present on frames produced by older clients/IGates, but
-      // exposing them here would make the old TNC layer emit one ackNN per
-      // fragment. Strip only the APRS reliability metadata; keep the Q1 data.
-      return AprsTextMessage(
-        frame,
-        igate: igate,
-        messageAddressee: addressee,
-        text: text,
-      );
-    }
     return AprsTextMessage(
       frame,
       igate: igate,
       messageAddressee: addressee,
-      text: text,
+      text: body.substring(0, marker),
       messageId: id,
     );
   }
