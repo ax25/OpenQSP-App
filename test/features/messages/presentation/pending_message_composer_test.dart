@@ -90,7 +90,16 @@ void main() {
     expect(tester.widget<TextField>(reopenedComposer).controller!.text, isEmpty);
     expect(
       tester.widget<IconButton>(find.byKey(const Key('sendMessage'))).onPressed,
-      isNotNull,
+      isNull,
+      reason: 'an empty composer must not be sendable after completion',
+    );
+    expect(
+      find.descendant(
+        of: find.byKey(const Key('sendMessage')),
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsNothing,
+      reason: 'completion must clear the sending state',
     );
   });
 }
