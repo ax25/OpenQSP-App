@@ -11,16 +11,17 @@ This document tracks known pending work for the OpenQSP client. It is intentiona
   - Sending keeps the composer focused and forces the newest sent message into view.
   - Covered by widget tests for initial bottom position and both keyboard-resize cases.
 
-- [ ] **Persistently hide cleared messages**
-  - `Vaciar mensajes` must hide the currently visible conversation history persistently for that client.
-  - Hidden messages must remain in the local database and must not be deleted from the server.
-  - Reopening/reloading the conversation must **not** make previously cleared messages visible again.
-  - New messages received or sent after the clear point must be visible normally.
-  - Prefer persisting a per-conversation visibility cutoff/high-water marker rather than modifying/deleting stored messages.
+- [x] **Persistently hide cleared messages**
+  - `Vaciar conversación` hides the currently visible conversation history persistently for that client.
+  - Hidden messages remain in the local database and are not deleted from the server.
+  - Reopening/reloading the conversation does not make previously cleared messages visible again.
+  - New messages received or sent after the clear point are visible normally.
+  - A per-conversation visibility cutoff is stored separately from message persistence.
+  - The conversation remains in the conversation list even when it has no visible message preview.
 
-- [ ] **Move `Vaciar mensajes` into overflow menu**
-  - Add a three-dot overflow button at the top-right of the conversation screen.
-  - `Vaciar mensajes` must appear as an item in that dropdown menu rather than as a permanently visible action.
+- [x] **Move `Vaciar conversación` into overflow menu**
+  - A three-dot overflow button appears at the top-right of the conversation screen.
+  - `Vaciar conversación` is the only menu item for now.
 
 ## Authentication / session handling
 
