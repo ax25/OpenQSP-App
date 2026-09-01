@@ -39,6 +39,7 @@ void main() {
 
     final composer = find.byKey(const Key('messageComposer'));
     await tester.enterText(composer, 'still sending');
+    await tester.pump();
     await tester.tap(find.byKey(const Key('sendMessage')));
     await tester.pump();
 
