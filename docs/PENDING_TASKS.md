@@ -41,32 +41,32 @@ This document tracks known pending work for the OpenQSP client. It is intentiona
   - Send all fragments of one OpenQSP transaction as a burst instead of strict stop-and-wait.
   - Keep different transactions to the same peer serialized initially to keep state simple.
 
-- [ ] **Selective fragment retry**
-  - Track ACK state independently per APRS fragment.
-  - After timeout, retransmit only fragments that have not been ACKed.
-  - Preserve duplicate tolerance and transaction idempotency.
+- [ ] **Symmetric aggregate fragment ACK + selective repair in both directions**
+  - Apply the same reliability mechanism to both **client → server** and **server → client** OpenQSP APRS transactions.
+  - The receiver must track fragment reception per OpenQSP transaction independently of the RF/APRS path that delivered each copy.
+  - In particular, a client may hear the same server burst through multiple IGates. It may receive one subset of fragments via one IGate and another subset via another IGate; all valid copies must be merged into the same reassembly state by transaction ID and fragment index.
+  - Duplicate and out-of-order copies must be tolerated and must never cause already collected fragments to be discarded.
+  - If the burst is incomplete after the normal receive window, the receiver sends one compact aggregate fragment-status frame (for example bitmap/ranges) describing which fragments were received or equivalently which are missing.
+  - The original sender then retransmits **only the missing fragment indexes**, together as a repair burst. Already acknowledged/known-received fragments must not be sent again.
+  - This process may repeat until the transaction is complete or the retry policy is exhausted.
+  - If all fragments are received, no fragment-by-fragment ACK train is required. The receiver can answer with one transaction-level completion response such as `RECEIVED`, `STORED`, or another explicitly defined final status appropriate to the operation.
+  - For operations with durable side effects (for example `SEND_MESSAGE` reaching the server), the final status must distinguish complete reassembly from durable processing/storage; `STORED`/commit should only be emitted after durable completion.
+  - For server → client delivery, define the equivalent final semantic clearly: complete message reassembled and accepted/persisted locally should be confirmable with one compact transaction-level acknowledgement rather than N physical APRS ACKs.
+  - Target server → client example with multiple IGates:
+    - server sends fragments `1 2 3 4 5 6 7` as one burst;
+    - client hears `1 2 4 5` via IGate A and `2 5 7` via IGate B;
+    - client merges them and knows it has `1 2 4 5 7`;
+    - client sends one aggregate status requesting/identifying missing `3 6`;
+    - server retransmits only `3 6` as one repair burst;
+    - client completes reassembly and sends one final `RECEIVED`/equivalent confirmation.
+  - Target client → server behavior is the mirror image: aggregate reception status, selective repair burst, then one final durable `STORED`/commit when applicable.
+  - This recovery must be automatic; losing one fragment must not leave either side hanging until a manual retry is offered.
 
-- [ ] **Aggregate fragment reception into one ACK bitmap/range response**
-  - Current behavior under loss is poor: if one or more burst fragments are lost, the transaction can remain stuck until the overall timeout, after which the UI only offers a manual retry.
-  - Replace the train of one APRS ACK per physical fragment with a single compact transaction-level `ACK RECEIVED` response that identifies which fragment indexes were received for a given OpenQSP transaction.
-  - The acknowledgement should fit in one APRS frame for normal burst sizes, for example with a bitmask, compact ranges, or another negotiated representation.
-  - After receiving this aggregate ACK, the sender must immediately determine the missing fragment indexes and retransmit **only those missing fragments**, together as another burst.
-  - Already acknowledged fragments must not be transmitted again.
-  - The same aggregate ACK mechanism can be repeated after a repair burst until the transaction is complete.
-  - Example target flow:
-    - client sends fragments `1 2 3 4 5 6 7` as one burst;
-    - server receives `1 2 4 5 7`;
-    - server sends one compact `ACK RECEIVED: 1,2,4,5,7` (or equivalent bitmap);
-    - client immediately retransmits only `3 6` as one repair burst;
-    - once complete and durably processed, server sends one `STORED`/commit response.
-  - This recovery must be automatic; a missing fragment should not leave the send hanging until a manual retry is offered.
-
-- [ ] **Reduce ACK overhead after successful client→server burst**
+- [ ] **Reduce ACK overhead after successful burst**
   - Real RF test: a 7-fragment `SEND_MESSAGE` burst was fully reassembled and stored by the server, but the return path still produced ACKs for every APRS fragment (`0N` through `0T`), many of them duplicated, before `STORED` arrived.
-  - Investigate a negotiated mode where, when the complete burst is received and durably processed, the server can suppress the per-fragment success ACK train and answer with a single transaction-level `STORED`/commit confirmation.
-  - Preserve a recovery path for incomplete bursts: if one or more fragments are missing, the protocol still needs enough information to identify and retransmit only the missing fragments rather than retransmitting the whole transaction.
-  - Do not collapse fragment ACK and durable commit semantics unless the replacement remains unambiguous under loss, duplication and out-of-order delivery.
-  - Goal: successful full bursts should ideally require one return RF packet instead of N fragment ACKs plus `STORED`.
+  - In the negotiated aggregate-ACK mode, when the complete burst is received and processed successfully, suppress the per-fragment success ACK train and answer with a single transaction-level completion response.
+  - Preserve the aggregate recovery path for incomplete bursts so missing fragments can be identified and retransmitted selectively rather than retransmitting the whole transaction.
+  - Goal: successful full bursts should ideally require one return RF packet instead of N fragment ACKs plus a final status.
 
 - [ ] **Explicit durable transaction commit ACK**
   - Fragment receipt ACK and durable message commit are different facts and must not share the same semantic ACK.
@@ -74,11 +74,13 @@ This document tracks known pending work for the OpenQSP client. It is intentiona
   - Add an explicit transaction-level commit response emitted only after full reassembly and durable server persistence.
   - Keep the experimental `APRS_COMMIT_ACK` capability disabled until this is unambiguous and tested under fragment loss/reordering.
 
-- [ ] **RF loss tests**
-  - Test a burst where one or more middle fragments are deliberately lost.
-  - Verify the server/client do not report `stored` before full reassembly and persistence.
-  - Verify only missing fragments are retransmitted.
-  - Test out-of-order and duplicated ACKs/fragments.
+- [ ] **RF loss / multi-path tests**
+  - Test bursts with one or more middle fragments deliberately lost in both client → server and server → client directions.
+  - Verify aggregate reception status identifies the correct missing fragments.
+  - Verify only missing fragments are retransmitted in the repair burst.
+  - Test out-of-order and duplicated fragments/ACK-status frames.
+  - Test server → client reassembly where complementary subsets of one transaction arrive through different IGates.
+  - Verify the final transaction status is not emitted before complete reassembly, and durable statuses such as `STORED` are not emitted before persistence.
 
 ## Message synchronization
 
