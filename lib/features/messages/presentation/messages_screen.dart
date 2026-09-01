@@ -165,20 +165,24 @@ class _MessagesScreenState extends State<MessagesScreen> {
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (_, index) {
         final item = controller.conversations[index];
+        final latest = item.latestMessage;
         return ListTile(
           key: Key('conversation-${item.remoteCallsign}'),
           title: Text(item.remoteCallsign),
-          subtitle: Text(
-            item.latestMessage.body,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+          subtitle: latest == null
+              ? null
+              : Text(
+                  latest.body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(formatConversationTimestamp(item.latestMessage.createdAt)),
+              if (latest != null)
+                Text(formatConversationTimestamp(latest.createdAt)),
               if (item.unreadCount > 0) ...[
-                const SizedBox(width: 8),
+                if (latest != null) const SizedBox(width: 8),
                 Badge(label: Text('${item.unreadCount}')),
               ],
             ],
