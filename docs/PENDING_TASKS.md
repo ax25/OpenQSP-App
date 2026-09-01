@@ -46,6 +46,13 @@ This document tracks known pending work for the OpenQSP client. It is intentiona
   - After timeout, retransmit only fragments that have not been ACKed.
   - Preserve duplicate tolerance and transaction idempotency.
 
+- [ ] **Reduce ACK overhead after successful client→server burst**
+  - Real RF test: a 7-fragment `SEND_MESSAGE` burst was fully reassembled and stored by the server, but the return path still produced ACKs for every APRS fragment (`0N` through `0T`), many of them duplicated, before `STORED` arrived.
+  - Investigate a negotiated mode where, when the complete burst is received and durably processed, the server can suppress the per-fragment success ACK train and answer with a single transaction-level `STORED`/commit confirmation.
+  - Preserve a recovery path for incomplete bursts: if one or more fragments are missing, the protocol still needs enough information to identify and retransmit only the missing fragments rather than retransmitting the whole transaction.
+  - Do not collapse fragment ACK and durable commit semantics unless the replacement remains unambiguous under loss, duplication and out-of-order delivery.
+  - Goal: successful full bursts should ideally require one return RF packet instead of N fragment ACKs plus `STORED`.
+
 - [ ] **Explicit durable transaction commit ACK**
   - Fragment receipt ACK and durable message commit are different facts and must not share the same semantic ACK.
   - Do not use the ACK of the highest-index fragment as proof that the full transaction was reconstructed/stored.
