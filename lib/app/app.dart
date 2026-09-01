@@ -143,9 +143,9 @@ class _OpenQspAppState extends State<OpenQspApp> {
           error = 'Incorrect password';
           continue;
         }
-        final context = _navigatorKey.currentContext;
-        if (context != null) {
-          ScaffoldMessenger.of(context)
+        final snackbarContext = _navigatorKey.currentContext;
+        if (snackbarContext != null) {
+          ScaffoldMessenger.of(snackbarContext)
             ..hideCurrentSnackBar()
             ..showSnackBar(
               SnackBar(

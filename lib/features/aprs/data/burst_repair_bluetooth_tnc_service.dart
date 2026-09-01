@@ -19,18 +19,20 @@ import 'bluetooth_tnc_service.dart';
 final class BurstRepairBluetoothTncService implements BluetoothTncService {
   BurstRepairBluetoothTncService(
     this.delegate, {
-    this.repairDelay = const Duration(seconds: 2),
+    this.repairDelay = const Duration(seconds: 5),
+    this.finalFragmentRepairDelay = const Duration(seconds: 2),
     this.repairRetryInterval = const Duration(seconds: 31),
     this.cacheTtl = openQspAprsDefaultTtl,
     this.completedCacheTtl = const Duration(minutes: 10),
   }) {
     if (repairDelay <= Duration.zero ||
+        finalFragmentRepairDelay <= Duration.zero ||
         repairRetryInterval <= Duration.zero ||
         cacheTtl <= Duration.zero ||
         completedCacheTtl <= Duration.zero) {
       throw ArgumentError(
-        'repairDelay, repairRetryInterval, cacheTtl and completedCacheTtl '
-        'must be positive',
+        'repairDelay, finalFragmentRepairDelay, repairRetryInterval, cacheTtl '
+        'and completedCacheTtl must be positive',
       );
     }
     _incomingFrameSubscription = _incomingDecoder.frames.listen(_onIncomingFrame);
@@ -39,6 +41,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 
   final BluetoothTncService delegate;
   final Duration repairDelay;
+  final Duration finalFragmentRepairDelay;
   final Duration repairRetryInterval;
   final Duration cacheTtl;
   final Duration completedCacheTtl;
@@ -60,6 +63,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   final Map<String, _SentBurst> _sentBursts = {};
   final Map<String, _ReceivedBurst> _receivedBursts = {};
   final Map<String, DateTime> _completedReceived = {};
+  final Map<String, Timer> _completedAckTimers = {};
 
   @override
   Stream<List<int>> get incomingBytes => _incoming.stream;
@@ -197,9 +201,11 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 
     if (_completedReceived.containsKey(key)) {
       _debugBurst(fragment.transactionId, duplicate: true);
-      unawaited(
-        _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
-      );
+      if (!_completedAckTimers.containsKey(key)) {
+        unawaited(
+          _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
+        );
+      }
       return true;
     }
 
@@ -215,22 +221,33 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     }
     burst.received.add(fragment.index);
     burst.lastSeen = now;
+    if (fragment.index == fragment.total - 1) {
+      burst.finalFragmentSeen = true;
+    }
     burst.timer?.cancel();
 
     if (burst.received.length == burst.total) {
       _receivedBursts.remove(key);
       _completedReceived[key] = now;
       _debugBurst(fragment.transactionId, duplicate: false);
-      unawaited(
-        _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
-      );
+      _completedAckTimers[key]?.cancel();
+      _completedAckTimers[key] = Timer(finalFragmentRepairDelay, () {
+        _completedAckTimers.remove(key);
+        unawaited(
+          _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
+        );
+      });
       return false;
     }
 
-    // A newly received fragment gets the short repair grace period. If the
-    // following Q1N is itself lost, retries use the much slower RF retry
-    // interval instead of continuously transmitting every repairDelay.
-    burst.timer = Timer(repairDelay, () => _requestMissing(key));
+    // While the final fragment has not been observed, keep a longer quiet
+    // period so a half-duplex transmitter can finish the original burst before
+    // the client emits Q1N. Seeing N/N proves the initial burst has ended, so
+    // missing-fragment repair can use the shorter grace from that point on.
+    final delay = burst.finalFragmentSeen
+        ? finalFragmentRepairDelay
+        : repairDelay;
+    burst.timer = Timer(delay, () => _requestMissing(key));
     return false;
   }
 
@@ -313,8 +330,12 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     for (final burst in _receivedBursts.values) {
       burst.timer?.cancel();
     }
+    for (final timer in _completedAckTimers.values) {
+      timer.cancel();
+    }
     _receivedBursts.clear();
     _completedReceived.clear();
+    _completedAckTimers.clear();
   }
 }
 
@@ -394,6 +415,7 @@ final class _ReceivedBurst {
   final int total;
   final String localIdentity;
   DateTime lastSeen;
+  bool finalFragmentSeen = false;
   final Set<int> received = {};
   Timer? timer;
 }

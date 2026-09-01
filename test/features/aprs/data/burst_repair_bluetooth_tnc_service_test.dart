@@ -29,6 +29,7 @@ void main() {
     final link = BurstRepairBluetoothTncService(
       delegate,
       repairDelay: const Duration(milliseconds: 20),
+      finalFragmentRepairDelay: const Duration(milliseconds: 10),
     );
     final forwarded = <List<int>>[];
     final subscription = link.incomingBytes.listen(forwarded.add);
@@ -64,11 +65,12 @@ void main() {
     await subscription.cancel();
   });
 
-  test('server burst gets one Q1A when complete and one Q1N when incomplete', () async {
+  test('server burst gets one delayed Q1A when complete and Q1N when incomplete', () async {
     final delegate = _FakeBluetoothTncService();
     final link = BurstRepairBluetoothTncService(
       delegate,
       repairDelay: const Duration(milliseconds: 10),
+      finalFragmentRepairDelay: const Duration(milliseconds: 10),
     );
     final subscription = link.incomingBytes.listen((_) {});
 
@@ -91,10 +93,80 @@ void main() {
         body: 'Q1:XYZ:01/02:B',
       ),
     );
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 5));
+    expect(delegate.sent.length, controlsAfterMissing);
 
+    await Future<void>.delayed(const Duration(milliseconds: 10));
     expect(delegate.sent.length, controlsAfterMissing + 1);
     expect(_body(delegate.sent.last), 'Q1A:XYZ');
+    await subscription.cancel();
+  });
+
+  test('final fragment switches missing repair from long to short grace', () async {
+    final delegate = _FakeBluetoothTncService();
+    final link = BurstRepairBluetoothTncService(
+      delegate,
+      repairDelay: const Duration(milliseconds: 80),
+      finalFragmentRepairDelay: const Duration(milliseconds: 20),
+    );
+    final subscription = link.incomingBytes.listen((_) {});
+
+    delegate.emit(
+      _kissMessage(
+        source: openQspAprsAddressee,
+        addressee: 'EA3GNU',
+        body: 'Q1:FNL:00/03:A',
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 35));
+    expect(delegate.sent, isEmpty, reason: 'initial burst still gets long grace');
+
+    delegate.emit(
+      _kissMessage(
+        source: openQspAprsAddressee,
+        addressee: 'EA3GNU',
+        body: 'Q1:FNL:02/03:C',
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(delegate.sent, isEmpty);
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(delegate.sent, hasLength(1));
+    expect(_body(delegate.sent.single), 'Q1N:FNL:0002');
+    await subscription.cancel();
+  });
+
+  test('short grace remains active after final fragment was observed', () async {
+    final delegate = _FakeBluetoothTncService();
+    final link = BurstRepairBluetoothTncService(
+      delegate,
+      repairDelay: const Duration(milliseconds: 80),
+      finalFragmentRepairDelay: const Duration(milliseconds: 20),
+    );
+    final subscription = link.incomingBytes.listen((_) {});
+
+    delegate.emit(
+      _kissMessage(
+        source: openQspAprsAddressee,
+        addressee: 'EA3GNU',
+        body: 'Q1:STK:03/04:D',
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    delegate.emit(
+      _kissMessage(
+        source: openQspAprsAddressee,
+        addressee: 'EA3GNU',
+        body: 'Q1:STK:00/04:A',
+      ),
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(delegate.sent, isEmpty);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(delegate.sent, hasLength(1));
+    expect(_body(delegate.sent.single), 'Q1N:STK:0006');
     await subscription.cancel();
   });
 
@@ -103,6 +175,7 @@ void main() {
     final link = BurstRepairBluetoothTncService(
       delegate,
       repairDelay: const Duration(milliseconds: 10),
+      finalFragmentRepairDelay: const Duration(milliseconds: 10),
       repairRetryInterval: const Duration(milliseconds: 80),
     );
     final subscription = link.incomingBytes.listen((_) {});
