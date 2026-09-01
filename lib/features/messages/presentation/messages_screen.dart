@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../application/messages_controller.dart';
 import '../domain/message_models.dart';
@@ -14,6 +15,8 @@ class MessagesScreen extends StatefulWidget {
 }
 
 class _MessagesScreenState extends State<MessagesScreen> {
+  bool _rebuildScheduled = false;
+
   @override
   void initState() {
     super.initState();
@@ -22,7 +25,24 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+
+    // Opening a conversation can synchronously notify the shared controller
+    // from ConversationScreen.initState(), while Flutter is still building the
+    // pushed route. Calling setState here during that build triggers
+    // "setState() or markNeedsBuild() called during build" on MessagesScreen.
+    // Keep normal idle notifications immediate, but defer build-phase changes
+    // to the next frame and coalesce multiple notifications into one rebuild.
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+      setState(() {});
+      return;
+    }
+    if (_rebuildScheduled) return;
+    _rebuildScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rebuildScheduled = false;
+      if (mounted) setState(() {});
+    });
   }
 
   @override
@@ -118,78 +138,65 @@ class _MessagesScreenState extends State<MessagesScreen> {
                   RealtimeConnectionState.reconnecting ||
               controller.connectionState ==
                   RealtimeConnectionState.disconnected ||
-              controller.connectionState ==
-                  RealtimeConnectionState.authenticationRequired)
+              controller.connectionState == RealtimeConnectionState.failed)
             MaterialBanner(
               content: Text(
-                controller.connectionState ==
-                        RealtimeConnectionState.authenticationRequired
-                    ? 'Authentication expired. Return and connect again.'
-                    : controller.connectionState ==
-                          RealtimeConnectionState.reconnecting
-                    ? 'Real-time connection reconnecting…'
-                    : 'Real-time connection unavailable',
+                controller.connectionState == RealtimeConnectionState.reconnecting
+                    ? 'Reconnecting…'
+                    : 'Realtime connection unavailable',
               ),
-              actions: const [SizedBox.shrink()],
+              actions: [
+                TextButton(
+                  onPressed: controller.reconcile,
+                  child: const Text('Retry'),
+                ),
+              ],
             ),
-          Expanded(child: _body(controller)),
+          Expanded(
+            child: Builder(
+              builder: (context) {
+                final conversations = controller.conversations;
+                if (conversations.isEmpty) {
+                  return const Center(child: Text('No conversations yet'));
+                }
+                return ListView.separated(
+                  itemCount: conversations.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (_, index) {
+                    final conversation = conversations[index];
+                    return ListTile(
+                      key: Key('conversation-${conversation.peer}'),
+                      title: Text(conversation.peer),
+                      subtitle: Text(
+                        conversation.lastMessage.body,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (conversation.unreadCount > 0)
+                            Badge(
+                              label: Text('${conversation.unreadCount}'),
+                              child: const Icon(Icons.mark_chat_unread_outlined),
+                            ),
+                          const SizedBox(width: 8),
+                          Text(
+                            formatMessageConversationDate(
+                              conversation.lastMessage.createdAt,
+                            ),
+                          ),
+                        ],
+                      ),
+                      onTap: () => _open(conversation.peer),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
         ],
       ),
-    );
-  }
-
-  Widget _body(MessagesController controller) {
-    if (controller.loading && controller.conversations.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (controller.error != null && controller.conversations.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text('Unable to load conversations'),
-            const SizedBox(height: 12),
-            OutlinedButton(
-              onPressed: controller.loadConversations,
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-    }
-    if (controller.conversations.isEmpty) {
-      return const Center(child: Text('No conversations yet'));
-    }
-    return ListView.separated(
-      itemCount: controller.conversations.length,
-      separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (_, index) {
-        final item = controller.conversations[index];
-        final latest = item.latestMessage;
-        return ListTile(
-          key: Key('conversation-${item.remoteCallsign}'),
-          title: Text(item.remoteCallsign),
-          subtitle: latest == null
-              ? null
-              : Text(
-                  latest.body,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (latest != null)
-                Text(formatConversationTimestamp(latest.createdAt)),
-              if (item.unreadCount > 0) ...[
-                if (latest != null) const SizedBox(width: 8),
-                Badge(label: Text('${item.unreadCount}')),
-              ],
-            ],
-          ),
-          onTap: () => _open(item.remoteCallsign),
-        );
-      },
     );
   }
 }
