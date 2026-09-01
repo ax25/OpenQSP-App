@@ -126,6 +126,7 @@ void main() {
     final composerFinder = find.byKey(const Key('messageComposer'));
     await tester.tap(composerFinder);
     await tester.enterText(composerFinder, 'new outgoing message');
+    await tester.pump();
     await tester.tap(find.byKey(const Key('sendMessage')));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
