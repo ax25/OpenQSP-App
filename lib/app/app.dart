@@ -6,6 +6,7 @@ import '../core/network/server_status_client.dart';
 import '../features/auth/application/auth_session.dart';
 import '../features/auth/data/auth_client.dart';
 import '../features/auth/data/auth_token_store.dart';
+import '../features/auth/presentation/server_password_dialog.dart';
 import '../features/aprs/application/aprs_session_controller.dart';
 import '../features/aprs/application/tnc_settings_controller.dart';
 import '../features/aprs/data/bluetooth_tnc_service.dart';
@@ -112,14 +113,26 @@ class _OpenQspAppState extends State<OpenQspApp> {
     }
     _reauthenticating = true;
     try {
+      // Authentication loss can be reported while a Messages widget is in the
+      // middle of a build/notification cycle. Do not mutate the Navigator until
+      // that frame has completed.
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+
       final navigator = _navigatorKey.currentState;
       navigator?.popUntil((route) => route.isFirst);
-      await Future<void>.delayed(Duration.zero);
+      await WidgetsBinding.instance.endOfFrame;
       if (!mounted) return;
 
       String? error;
       while (mounted) {
-        final password = await _showPasswordDialog(callsign, error: error);
+        final context = _navigatorKey.currentContext;
+        if (context == null) return;
+        final password = await showServerPasswordDialog(
+          context,
+          callsign: callsign,
+          error: error,
+        );
         if (password == null || !mounted) return;
         final result = await _authSession.login(callsign, password);
         if (!mounted) return;
@@ -148,59 +161,6 @@ class _OpenQspAppState extends State<OpenQspApp> {
       }
     } finally {
       _reauthenticating = false;
-    }
-  }
-
-  Future<String?> _showPasswordDialog(String callsign, {String? error}) async {
-    final context = _navigatorKey.currentContext;
-    if (context == null) return null;
-    final controller = TextEditingController();
-    try {
-      return await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Connect to server'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Password for $callsign'),
-              const SizedBox(height: 12),
-              TextField(
-                key: const Key('serverPasswordField'),
-                controller: controller,
-                obscureText: true,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: 'Password',
-                  errorText: error,
-                ),
-                onSubmitted: (value) {
-                  if (value.isNotEmpty) Navigator.pop(dialogContext, value);
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              key: const Key('connectButton'),
-              onPressed: () {
-                if (controller.text.isNotEmpty) {
-                  Navigator.pop(dialogContext, controller.text);
-                }
-              },
-              child: const Text('Connect'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      controller.dispose();
     }
   }
 
