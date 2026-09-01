@@ -38,6 +38,8 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   static const _aprsParser = AprsParser();
   static const _messageEncoder = AprsMessageEncoder();
   static const _kissEncoder = KissEncoder();
+  static const _ansiRed = '\x1B[31m';
+  static const _ansiReset = '\x1B[0m';
 
   final KissDecoder _incomingDecoder = KissDecoder();
   final StreamController<List<int>> _incoming =
@@ -134,6 +136,18 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   static bool _isFromOpenQsp(AprsTextMessage message) =>
       message.frame.source.callsign == openQspAprsAddressee;
 
+  static String _timestamp() {
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    final millis = now.millisecond.toString().padLeft(3, '0');
+    return '${two(now.hour)}:${two(now.minute)}:${two(now.second)}.$millis';
+  }
+
+  static void _debugTx(String message) {
+    if (!kDebugMode) return;
+    debugPrint('$_ansiRed${_timestamp()} $message$_ansiReset');
+  }
+
   static void _debugBurst(String transactionId, {required bool duplicate}) {
     if (!kDebugMode) return;
     debugPrint(
@@ -152,12 +166,10 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
         for (final index in missing) {
           final bytes = burst.fragments[index];
           if (bytes != null) {
-            if (kDebugMode) {
-              debugPrint(
-                'TX repair fragment ${index + 1}/${burst.total} '
-                '(transaction $transactionId)',
-              );
-            }
+            _debugTx(
+              'TX repair fragment ${index + 1}/${burst.total} '
+              '(transaction $transactionId)',
+            );
             unawaited(delegate.sendBytes(bytes));
           }
         }
@@ -209,6 +221,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   void _requestMissing(String key) {
     final burst = _receivedBursts[key];
     if (burst == null) return;
+    burst.timer = null;
     final missing = <int>{
       for (var index = 0; index < burst.total; index++)
         if (!burst.received.contains(index)) index,
@@ -220,7 +233,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
         encodeOpenQspBurstMissing(burst.transactionId, missing),
       ),
     );
-    burst.timer = Timer(repairDelay, () => _requestMissing(key));
   }
 
   Future<void> _sendControl(String localIdentity, String body) async {
@@ -240,9 +252,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       source: source,
       information: information,
     );
-    if (kDebugMode) {
-      debugPrint('TX $localIdentity -> $openQspAprsAddressee | OPENQSP | $body');
-    }
+    _debugTx('TX $localIdentity -> $openQspAprsAddressee | OPENQSP | $body');
     await delegate.sendBytes(
       _kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
     );
