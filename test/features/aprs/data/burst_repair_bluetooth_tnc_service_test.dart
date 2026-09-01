@@ -35,13 +35,13 @@ void main() {
 
     final first = _kissMessage(
       source: 'EA3GNU',
-      addressee: 'OPENQSP',
+      addressee: openQspAprsAddressee,
       body: 'Q1:ABC:00/02:A',
       messageId: '10',
     );
     final second = _kissMessage(
       source: 'EA3GNU',
-      addressee: 'OPENQSP',
+      addressee: openQspAprsAddressee,
       body: 'Q1:ABC:01/02:B',
       messageId: '11',
     );
@@ -51,7 +51,7 @@ void main() {
 
     delegate.emit(
       _kissMessage(
-        source: 'OPENQSP',
+        source: openQspAprsAddressee,
         addressee: 'EA3GNU',
         body: 'Q1N:ABC:0002',
       ),
@@ -74,7 +74,7 @@ void main() {
 
     delegate.emit(
       _kissMessage(
-        source: 'OPENQSP',
+        source: openQspAprsAddressee,
         addressee: 'EA3GNU-5',
         body: 'Q1:XYZ:00/02:A',
       ),
@@ -86,7 +86,7 @@ void main() {
 
     delegate.emit(
       _kissMessage(
-        source: 'OPENQSP',
+        source: openQspAprsAddressee,
         addressee: 'EA3GNU-5',
         body: 'Q1:XYZ:01/02:B',
       ),
