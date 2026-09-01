@@ -32,7 +32,9 @@ void main() {
     expect(find.byKey(const Key('message-one')), findsOneWidget);
     expect(find.byKey(const Key('message-two')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('clearMessages')));
+    await tester.tap(find.byKey(const Key('conversationMenu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Vaciar conversación'));
     await tester.pump();
 
     expect(find.byKey(const Key('message-one')), findsNothing);
