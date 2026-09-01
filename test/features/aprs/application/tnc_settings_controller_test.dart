@@ -311,18 +311,6 @@ void main() {
     );
   }
 
-  Future<AprsPacket> sentAprs(List<int> bytes) async {
-    final kiss = KissDecoder();
-    final frameFuture = kiss.frames.first;
-    kiss.add(bytes);
-    final frame = await frameFuture;
-    final packet = const AprsParser().parse(
-      const Ax25Decoder().decode(frame.payload),
-    )!;
-    await kiss.close();
-    return packet;
-  }
-
   test('CAPABILITIES response from OQSP to the local APRS identity is decoded',
       () async {
     storage.value = device;
@@ -340,7 +328,7 @@ void main() {
     expect(controller.openQspCheckState, OpenQspCheckState.available);
   });
 
-  test('acknowledges every server retry and decodes CAPABILITIES only once',
+  test('server retry does not emit legacy APRS ACK and decodes CAPABILITIES once',
       () async {
     storage.value = device;
     await controller.initialize();
@@ -357,12 +345,7 @@ void main() {
     service.bytes.add(reply);
     await Future<void>.delayed(Duration.zero);
 
-    expect(service.sentBytes, hasLength(3)); // probe plus two APRS ACKs
-    for (final bytes in service.sentBytes.skip(1)) {
-      final ack = await sentAprs(bytes) as AprsAck;
-      expect(ack.addressee, 'OQSP');
-      expect(ack.messageId, '0A');
-    }
+    expect(service.sentBytes, hasLength(1)); // probe only; burst shim owns Q1A/Q1N
     final object = controller.lastOpenQspObject as OpenQspCapabilities;
     expect(object.protocolVersion, 1);
     expect(object.capabilities, 0x0000000f);

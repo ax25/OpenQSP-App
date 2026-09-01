@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
+
 import '../../../core/openqsp_protocol/openqsp_codec.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../../../core/openqsp_protocol/openqsp_operation.dart';
@@ -91,10 +93,21 @@ final class AprsMessagesTransport
       _lastObservedAprsRejects = _tnc.aprsRejects;
       session.addListener(_onSessionChanged);
       _tnc.addListener(_onTncChanged);
+      _replaySessionMessages();
     }
     _emitConnectionState();
     if (!_serverReachable) {
       throw StateError('APRS OpenQSP session is not available');
+    }
+  }
+
+  void _replaySessionMessages() {
+    for (final object in session.recentMessages) {
+      final message = _fromOpenQspMessage(object);
+      final isNew = _messages.every((existing) => existing.id != message.id);
+      if (!isNew) continue;
+      _messages.add(message);
+      _events.add(MessageReceived(message));
     }
   }
 
@@ -188,7 +201,14 @@ final class AprsMessagesTransport
         final isNew = _messages.every((existing) => existing.id != message.id);
         if (isNew) _messages.add(message);
         session.setActivity(AprsActivityState.newMessageReceived);
-        if (isNew || progressiveCursor != null) {
+        final shouldEmit = isNew || progressiveCursor != null;
+        if (kDebugMode) {
+          debugPrint(
+            'APRS MESSAGES | RX #$sequence | new=$isNew | '
+            'syncCursor=${progressiveCursor ?? '-'} | emit=$shouldEmit',
+          );
+        }
+        if (shouldEmit) {
           _events.add(MessageReceived(message, syncCursor: progressiveCursor));
         }
       case OpenQspEnd(

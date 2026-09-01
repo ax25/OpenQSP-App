@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../application/messages_controller.dart';
 import '../domain/message_models.dart';
@@ -168,7 +167,7 @@ class _ConversationScreenState extends State<ConversationScreen>
       widget.controller,
       widget.remoteCallsign,
     );
-    if (sending || text.isEmpty || text.length > maximumMessageLength) return;
+    if (sending || text.isEmpty || !messageBodyFitsProtocol(text)) return;
 
     _keepBottomVisibleDuringKeyboardResize = true;
     _composerFocus.requestFocus();
@@ -210,6 +209,10 @@ class _ConversationScreenState extends State<ConversationScreen>
       widget.controller,
       widget.remoteCallsign,
     );
+    final composerText = _composer.text.trim();
+    final composerBytes = messageBodyUtf8Length(composerText);
+    final composerFits = composerBytes <= maximumMessageLength;
+    final canSend = !sending && composerText.isNotEmpty && composerFits;
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.remoteCallsign),
@@ -345,12 +348,15 @@ class _ConversationScreenState extends State<ConversationScreen>
                   key: const Key('messageComposer'),
                   controller: _composer,
                   focusNode: _composerFocus,
-                  maxLength: maximumMessageLength,
                   textInputAction: TextInputAction.send,
-                  inputFormatters: [
-                    LengthLimitingTextInputFormatter(maximumMessageLength),
-                  ],
-                  decoration: const InputDecoration(labelText: 'Message'),
+                  decoration: InputDecoration(
+                    labelText: 'Message',
+                    counterText: '$composerBytes/$maximumMessageLength bytes',
+                    counterStyle: composerFits
+                        ? null
+                        : TextStyle(color: Theme.of(context).colorScheme.error),
+                  ),
+                  onChanged: (_) => setState(() {}),
                   onTap: _prepareForKeyboard,
                   onSubmitted: (_) {
                     _keepBottomVisibleDuringKeyboardResize = true;
@@ -362,7 +368,7 @@ class _ConversationScreenState extends State<ConversationScreen>
               const SizedBox(width: 8),
               IconButton(
                 key: const Key('sendMessage'),
-                onPressed: sending ? null : _send,
+                onPressed: canSend ? _send : null,
                 icon: sending
                     ? const SizedBox.square(
                         dimension: 20,

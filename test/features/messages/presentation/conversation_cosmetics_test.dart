@@ -32,12 +32,15 @@ void main() {
     expect(find.byKey(const Key('message-one')), findsOneWidget);
     expect(find.byKey(const Key('message-two')), findsOneWidget);
 
-    await tester.tap(find.byKey(const Key('clearMessages')));
+    await tester.tap(find.byKey(const Key('conversationMenu')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Vaciar conversación'));
     await tester.pump();
 
     expect(find.byKey(const Key('message-one')), findsNothing);
     expect(find.byKey(const Key('message-two')), findsNothing);
-    expect(controller.historyFor('N0CALL'), hasLength(2));
+    expect(controller.historyFor('N0CALL'), isEmpty);
+    expect(repository.items, hasLength(2));
 
     realtime.emit(_message('three', now, from: 'N0CALL'));
     await tester.pumpAndSettle();
@@ -45,7 +48,7 @@ void main() {
     expect(find.byKey(const Key('message-one')), findsNothing);
     expect(find.byKey(const Key('message-two')), findsNothing);
     expect(find.byKey(const Key('message-three')), findsOneWidget);
-    expect(controller.historyFor('N0CALL'), hasLength(3));
+    expect(controller.historyFor('N0CALL'), hasLength(1));
   });
 
   testWidgets('conversation opens at the newest message', (tester) async {

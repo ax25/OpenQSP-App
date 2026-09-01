@@ -1,8 +1,16 @@
+import 'dart:convert';
+
 enum MessageDirection { sent, received }
 
 enum MessageDeliveryStatus { processing, retry, stored, delivered, read }
 
+/// OpenQSP v1 message body limit, measured on the wire as UTF-8 bytes.
 const int maximumMessageLength = 208;
+
+int messageBodyUtf8Length(String value) => utf8.encode(value).length;
+
+bool messageBodyFitsProtocol(String value) =>
+    messageBodyUtf8Length(value) <= maximumMessageLength;
 
 class InternetMessage {
   const InternetMessage({

@@ -3,15 +3,11 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/core/openqsp_protocol/openqsp_models.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
-import 'package:openqsp_app/features/aprs/aprs/aprs_packet.dart';
-import 'package:openqsp_app/features/aprs/aprs/aprs_parser.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
-import 'package:openqsp_app/features/aprs/ax25/ax25_decoder.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_encoder.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_service.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_storage.dart';
 import 'package:openqsp_app/features/aprs/domain/tnc_device.dart';
-import 'package:openqsp_app/features/aprs/kiss/kiss_decoder.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
 
@@ -62,19 +58,8 @@ final class _Service implements BluetoothTncService {
   }
 }
 
-Future<AprsPacket> _decodeSentAprs(List<int> bytes) async {
-  final kiss = KissDecoder();
-  final frameFuture = kiss.frames.first;
-  kiss.add(bytes);
-  final kissFrame = await frameFuture;
-  final ax25 = const Ax25Decoder().decode(kissFrame.payload);
-  final packet = const AprsParser().parse(ax25)!;
-  await kiss.close();
-  return packet;
-}
-
 void main() {
-  test('IGate third-party CAPABILITIES is decoded and ACKed', () async {
+  test('IGate third-party CAPABILITIES is decoded without legacy APRS ACK', () async {
     final service = _Service();
     final controller = TncSettingsController(
       storage: _Storage(),
@@ -121,9 +106,6 @@ void main() {
     expect(capabilities.protocolVersion, 1);
     expect(capabilities.capabilities, 0x0000000f);
 
-    expect(service.sent, hasLength(2));
-    final ack = await _decodeSentAprs(service.sent.last) as AprsAck;
-    expect(ack.addressee, 'OQSP');
-    expect(ack.messageId, '00');
+    expect(service.sent, hasLength(1)); // probe only; burst shim owns Q1A/Q1N
   });
 }

@@ -49,6 +49,8 @@ final class AprsSessionController extends ChangeNotifier {
   DateTime? _capabilitiesCheckStartedAt;
   AprsSessionState? _responseHealthOverride;
   int _serverCapabilities = 0;
+  final List<OpenQspMessage> _recentMessages = [];
+  static const int _recentMessageLimit = 64;
 
   bool get active => _active;
   AprsActivityState get activityState => _activityState;
@@ -59,6 +61,7 @@ final class AprsSessionController extends ChangeNotifier {
   int get serverCapabilities => _serverCapabilities;
   bool get supportsAprsCommitAck =>
       _serverCapabilities & OpenQspCapability.aprsCommitAck != 0;
+  List<OpenQspMessage> get recentMessages => List.unmodifiable(_recentMessages);
 
   AprsSessionState get state {
     if (!_active) return AprsSessionState.inactive;
@@ -171,10 +174,24 @@ final class AprsSessionController extends ChangeNotifier {
     _serverCapabilities = 0;
     _capabilitiesCheckStartedAt = null;
     _lastObservedFramesRx = tncController.openQspFramesRx;
+    _recentMessages.clear();
     _stopAgeTimer();
     _notify();
     await tncController.disconnect();
     _notify();
+  }
+
+  void _rememberMessage(OpenQspMessage message) {
+    final duplicate = _recentMessages.any(
+      (existing) =>
+          existing.recipient == message.recipient &&
+          existing.sequence == message.sequence,
+    );
+    if (duplicate) return;
+    _recentMessages.add(message);
+    if (_recentMessages.length > _recentMessageLimit) {
+      _recentMessages.removeAt(0);
+    }
   }
 
   void _onTncChanged() {
@@ -185,6 +202,7 @@ final class AprsSessionController extends ChangeNotifier {
       _observeServerResponse(object);
       switch (object) {
         case OpenQspMessage():
+          _rememberMessage(object);
           _activityState = AprsActivityState.newMessageReceived;
         case OpenQspEnd(:final requestOperation, :final returnedCount)
             when requestOperation == OpenQspOperation.getNewMessages:

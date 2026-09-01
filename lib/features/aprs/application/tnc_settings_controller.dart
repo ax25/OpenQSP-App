@@ -105,7 +105,6 @@ class TncSettingsController extends ChangeNotifier {
   final OpenQspAprsReassembler _trafficTxReassembler = OpenQspAprsReassembler();
   final Map<String, _CompletedOpenQspTransaction>
   _completedOpenQspTransactions = {};
-  final Map<String, _OpenQspInboundAckProgress> _openQspInboundAckProgress = {};
   static const OpenQspCodec _openQspCodec = OpenQspCodec();
   static const Ax25Encoder _ax25Encoder = Ax25Encoder();
   static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
@@ -390,11 +389,9 @@ class TncSettingsController extends ChangeNotifier {
           if (packet.igate case final igate?) {
             lastOpenQspIgate = igate.toString();
           }
-          if (packet.messageId case final messageId?) {
-            if (_shouldAckOpenQspFragment(packet, messageId)) {
-              unawaited(_sendAprsAck(messageId));
-            }
-          }
+          // Q1 reliability is handled exclusively by
+          // BurstRepairBluetoothTncService using Q1A/Q1N. Never emit legacy
+          // APRS ackNN responses for OpenQSP fragments here.
           _decodeOpenQsp(packet);
         }
         break;
@@ -414,83 +411,6 @@ class TncSettingsController extends ChangeNotifier {
     _debugTraffic(packet, transmitted: false);
   }
 
-  bool _shouldAckOpenQspFragment(AprsTextMessage message, String messageId) {
-    try {
-      final fragment = parseFragment(message.text);
-      final now = DateTime.now().toUtc();
-      _openQspInboundAckProgress.removeWhere(
-        (_, progress) => now.difference(progress.lastSeen) >= openQspAprsDefaultTtl,
-      );
-      final key = '${message.frame.source}|${fragment.transactionId}';
-      var progress = _openQspInboundAckProgress[key];
-
-      // A completed Q1 transaction ID may later be reused. A different APRS
-      // message ID on fragment 0 identifies a new outbound transaction and
-      // resets the stale-fragment suppression state without confusing delayed
-      // echoes of the previous fragment 0.
-      final startsNewReuse =
-          fragment.index == 0 &&
-          progress != null &&
-          progress.highestIndex == progress.total - 1 &&
-          progress.firstMessageId != null &&
-          progress.firstMessageId != messageId;
-      if (progress == null || progress.total != fragment.total || startsNewReuse) {
-        progress = _OpenQspInboundAckProgress(
-          total: fragment.total,
-          highestIndex: -1,
-          firstMessageId: fragment.index == 0 ? messageId : null,
-          lastSeen: now,
-        );
-        _openQspInboundAckProgress[key] = progress;
-      }
-
-      progress.lastSeen = now;
-      if (fragment.index < progress.highestIndex) {
-        return false;
-      }
-      if (fragment.index > progress.highestIndex) {
-        progress.highestIndex = fragment.index;
-      }
-      if (fragment.index == 0 && progress.firstMessageId == null) {
-        progress.firstMessageId = messageId;
-      }
-      return true;
-    } on Object {
-      // Preserve the previous behavior if a supposedly OpenQSP payload cannot
-      // be parsed here; the regular decoder will account for the error.
-      return true;
-    }
-  }
-
-  Future<void> _sendAprsAck(String messageId) async {
-    try {
-      final call = sourceCallsign;
-      if (call == null || !kissReady) return;
-      final information = _messageEncoder.encode(
-        addressee: openQspAprsAddressee,
-        body: 'ack$messageId',
-      );
-      final ax25 = _ax25Encoder.encodeUi(
-        destination: const Ax25Address(
-          callsign: openQspAprsTocall,
-          ssid: 0,
-          hasBeenRepeated: false,
-          isLast: false,
-        ),
-        source: Ax25Address(
-          callsign: call,
-          ssid: aprsSsid,
-          hasBeenRepeated: false,
-          isLast: true,
-        ),
-        information: information,
-      );
-      await sendKiss(KissFrame(port: 0, command: 0, payload: ax25));
-    } on Object catch (error) {
-      _debugColor('APRS ACK TX error: $error', _ansiRed);
-    }
-  }
-
   bool _isOpenQspResponse(AprsTextMessage message) {
     final call = sourceCallsign;
     if (call == null || message.frame.source.callsign != openQspAprsAddressee) {
@@ -502,8 +422,6 @@ class TncSettingsController extends ChangeNotifier {
 
   void _decodeOpenQsp(AprsTextMessage message) {
     try {
-      // AprsParser has already removed {messageId; parsing text avoids
-      // accidentally appending that suffix for a second time.
       final fragment = parseFragment(message.text);
       openQspFragmentsRx++;
       final now = DateTime.now().toUtc();
@@ -520,10 +438,6 @@ class TncSettingsController extends ChangeNotifier {
       );
       if (bytes == null) return;
 
-      // Q1 transaction IDs are bounded and may legitimately be reused by the
-      // server after the earlier transaction has left its outbound queue. Only
-      // suppress an exact completed payload; a different payload with the same
-      // source + transaction ID is a new logical response and must be decoded.
       final completed = _completedOpenQspTransactions[transactionKey];
       if (completed != null && listEquals(completed.bytes, bytes)) return;
 
@@ -770,7 +684,6 @@ class TncSettingsController extends ChangeNotifier {
     _cancelOpenQspCheckTimers();
     _openQspCheckDeadline = null;
     openQspCheckState = OpenQspCheckState.notChecked;
-    _openQspInboundAckProgress.clear();
     await service.disconnect();
     if (_disposed) return;
     if (state == TncConnectionState.connected ||
@@ -787,7 +700,6 @@ class TncSettingsController extends ChangeNotifier {
     _cancelOpenQspCheckTimers();
     _openQspCheckDeadline = null;
     openQspCheckState = OpenQspCheckState.notChecked;
-    _openQspInboundAckProgress.clear();
     await service.disconnect();
     await storage.clear();
     device = null;
@@ -805,17 +717,11 @@ class TncSettingsController extends ChangeNotifier {
     _notify();
   }
 
-  /// Ends this controller's ownership of the test connection.
-  ///
-  /// Transport shutdown is deliberately separate from [disconnect]'s UI state
-  /// transition: Flutter disposal cannot await, and no asynchronous completion
-  /// is allowed to notify a disposed [ChangeNotifier].
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
     _cancelOpenQspCheckTimers();
-    _openQspInboundAckProgress.clear();
     unawaited(_byteSubscription.cancel());
     unawaited(_frameSubscription.cancel());
     unawaited(_connectionLossSubscription.cancel());
@@ -833,18 +739,4 @@ final class _CompletedOpenQspTransaction {
 
   final DateTime completedAt;
   final List<int> bytes;
-}
-
-final class _OpenQspInboundAckProgress {
-  _OpenQspInboundAckProgress({
-    required this.total,
-    required this.highestIndex,
-    required this.firstMessageId,
-    required this.lastSeen,
-  });
-
-  final int total;
-  int highestIndex;
-  String? firstMessageId;
-  DateTime lastSeen;
 }

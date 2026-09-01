@@ -58,7 +58,7 @@ class _FakeTncService implements BluetoothTncService {
 }
 
 void main() {
-  test('does not ACK an older OpenQSP fragment after advancing', () async {
+  test('Q1 fragments never trigger legacy APRS ACKs', () async {
     const device = TncDevice(id: '00:11:22:33:44:55', name: 'TNC');
     final service = _FakeTncService();
     final controller = TncSettingsController(
@@ -86,7 +86,7 @@ void main() {
         recipient: 'EA3GNU',
         body:
             'Long enough OpenQSP message to ensure that this response spans '
-            'multiple APRS fragments for stale ACK suppression testing.',
+            'multiple APRS fragments for transaction-level reliability testing.',
       ),
     );
     final fragments = fragmentFrame(core, 'ACK');
@@ -94,27 +94,16 @@ void main() {
 
     _injectFragment(service, fragments[0], messageId: '10');
     await _settle();
-    expect(service.sentBytes, hasLength(1));
-
-    // Repetition of the current fragment may mean our ACK was lost, so ACK it.
     _injectFragment(service, fragments[0], messageId: '10');
     await _settle();
-    expect(service.sentBytes, hasLength(2));
-
     _injectFragment(service, fragments[1], messageId: '11');
     await _settle();
-    expect(service.sentBytes, hasLength(3));
-
-    // Once fragment 2 has arrived, the server necessarily received ACK 10 in
-    // its stop-and-wait outbound flow. A later fragment 1 is only a stale echo.
     _injectFragment(service, fragments[0], messageId: '10');
     await _settle();
-    expect(service.sentBytes, hasLength(3));
-
-    // The current highest fragment still gets re-ACKed if repeated.
     _injectFragment(service, fragments[1], messageId: '11');
     await _settle();
-    expect(service.sentBytes, hasLength(4));
+
+    expect(service.sentBytes, isEmpty);
   });
 }
 
