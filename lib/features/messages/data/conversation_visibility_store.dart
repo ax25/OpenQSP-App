@@ -22,20 +22,7 @@ final class PreferencesConversationVisibilityStore
   Future<Map<String, DateTime>> cutoffs(String callsign) async {
     await _writeTail;
     final preferences = await _preferences;
-    final encoded = preferences.getString(_key(callsign));
-    if (encoded == null || encoded.isEmpty) return <String, DateTime>{};
-    try {
-      final decoded = jsonDecode(encoded);
-      if (decoded is! Map) return <String, DateTime>{};
-      final result = <String, DateTime>{};
-      for (final entry in decoded.entries) {
-        final value = DateTime.tryParse(entry.value.toString());
-        if (value != null) result[_normalize(entry.key.toString())] = value.toUtc();
-      }
-      return result;
-    } on Object {
-      return <String, DateTime>{};
-    }
+    return _decode(preferences.getString(_key(callsign)));
   }
 
   @override
@@ -44,7 +31,7 @@ final class PreferencesConversationVisibilityStore
     _writeTail = _writeTail.then((_) async {
       try {
         final preferences = await _preferences;
-        final current = await cutoffs(callsign);
+        final current = _decode(preferences.getString(_key(callsign)));
         final normalizedPeer = _normalize(peer);
         final existing = current[normalizedPeer];
         final next = cutoff.toUtc();
@@ -65,6 +52,22 @@ final class PreferencesConversationVisibilityStore
       }
     });
     return completer.future;
+  }
+
+  static Map<String, DateTime> _decode(String? encoded) {
+    if (encoded == null || encoded.isEmpty) return <String, DateTime>{};
+    try {
+      final decoded = jsonDecode(encoded);
+      if (decoded is! Map) return <String, DateTime>{};
+      final result = <String, DateTime>{};
+      for (final entry in decoded.entries) {
+        final value = DateTime.tryParse(entry.value.toString());
+        if (value != null) result[_normalize(entry.key.toString())] = value.toUtc();
+      }
+      return result;
+    } on Object {
+      return <String, DateTime>{};
+    }
   }
 
   static String _normalize(String value) => value.trim().toUpperCase();
