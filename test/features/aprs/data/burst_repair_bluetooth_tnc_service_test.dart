@@ -97,6 +97,40 @@ void main() {
     expect(_body(delegate.sent.last), 'Q1A:XYZ');
     await subscription.cancel();
   });
+
+  test('incomplete burst retries Q1N only after the slow silence interval', () async {
+    final delegate = _FakeBluetoothTncService();
+    final link = BurstRepairBluetoothTncService(
+      delegate,
+      repairDelay: const Duration(milliseconds: 10),
+      repairRetryInterval: const Duration(milliseconds: 80),
+    );
+    final subscription = link.incomingBytes.listen((_) {});
+
+    delegate.emit(
+      _kissMessage(
+        source: openQspAprsAddressee,
+        addressee: 'EA3GNU',
+        body: 'Q1:SLW:00/02:A',
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 25));
+
+    expect(delegate.sent, hasLength(1));
+    expect(_body(delegate.sent.single), 'Q1N:SLW:0002');
+
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(
+      delegate.sent,
+      hasLength(1),
+      reason: 'Q1N must not repeat at the short repair grace cadence',
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+    expect(delegate.sent, hasLength(2));
+    expect(_body(delegate.sent.last), 'Q1N:SLW:0002');
+    await subscription.cancel();
+  });
 }
 
 List<int> _kissMessage({
