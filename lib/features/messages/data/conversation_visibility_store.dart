@@ -4,8 +4,12 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 abstract interface class ConversationVisibilityStore {
-  Future<Map<String, DateTime>> cutoffs(String callsign);
-  Future<void> setCutoff(String callsign, String peer, DateTime cutoff);
+  Future<Map<String, Set<String>>> hiddenMessageIds(String callsign);
+  Future<void> hideMessages(
+    String callsign,
+    String peer,
+    Iterable<String> messageIds,
+  );
 }
 
 final class PreferencesConversationVisibilityStore
@@ -16,36 +20,35 @@ final class PreferencesConversationVisibilityStore
   final Future<SharedPreferences> _preferences;
   Future<void> _writeTail = Future<void>.value();
 
-  static const _prefix = 'openqsp.conversation-clear-cutoffs.v1.';
+  static const _prefix = 'openqsp.conversation-hidden-messages.v1.';
 
   @override
-  Future<Map<String, DateTime>> cutoffs(String callsign) async {
+  Future<Map<String, Set<String>>> hiddenMessageIds(String callsign) async {
     await _writeTail;
     final preferences = await _preferences;
     return _decode(preferences.getString(_key(callsign)));
   }
 
   @override
-  Future<void> setCutoff(String callsign, String peer, DateTime cutoff) {
+  Future<void> hideMessages(
+    String callsign,
+    String peer,
+    Iterable<String> messageIds,
+  ) {
+    final ids = messageIds.where((id) => id.isNotEmpty).toSet();
+    if (ids.isEmpty) return _writeTail;
     final completer = Completer<void>();
     _writeTail = _writeTail.then((_) async {
       try {
         final preferences = await _preferences;
         final current = _decode(preferences.getString(_key(callsign)));
-        final normalizedPeer = _normalize(peer);
-        final existing = current[normalizedPeer];
-        final next = cutoff.toUtc();
-        if (existing == null || next.isAfter(existing)) {
-          current[normalizedPeer] = next;
-          await preferences.setString(
-            _key(callsign),
-            jsonEncode(
-              current.map(
-                (key, value) => MapEntry(key, value.toUtc().toIso8601String()),
-              ),
-            ),
-          );
-        }
+        current.putIfAbsent(_normalize(peer), () => <String>{}).addAll(ids);
+        await preferences.setString(
+          _key(callsign),
+          jsonEncode(
+            current.map((key, value) => MapEntry(key, value.toList()..sort())),
+          ),
+        );
         completer.complete();
       } on Object catch (error, stackTrace) {
         completer.completeError(error, stackTrace);
@@ -54,19 +57,23 @@ final class PreferencesConversationVisibilityStore
     return completer.future;
   }
 
-  static Map<String, DateTime> _decode(String? encoded) {
-    if (encoded == null || encoded.isEmpty) return <String, DateTime>{};
+  static Map<String, Set<String>> _decode(String? encoded) {
+    if (encoded == null || encoded.isEmpty) return <String, Set<String>>{};
     try {
       final decoded = jsonDecode(encoded);
-      if (decoded is! Map) return <String, DateTime>{};
-      final result = <String, DateTime>{};
+      if (decoded is! Map) return <String, Set<String>>{};
+      final result = <String, Set<String>>{};
       for (final entry in decoded.entries) {
-        final value = DateTime.tryParse(entry.value.toString());
-        if (value != null) result[_normalize(entry.key.toString())] = value.toUtc();
+        final value = entry.value;
+        if (value is! List) continue;
+        result[_normalize(entry.key.toString())] = value
+            .whereType<String>()
+            .where((id) => id.isNotEmpty)
+            .toSet();
       }
       return result;
     } on Object {
-      return <String, DateTime>{};
+      return <String, Set<String>>{};
     }
   }
 
@@ -75,19 +82,24 @@ final class PreferencesConversationVisibilityStore
 }
 
 final class MemoryConversationVisibilityStore implements ConversationVisibilityStore {
-  final Map<String, Map<String, DateTime>> _values = {};
+  final Map<String, Map<String, Set<String>>> _values = {};
 
   @override
-  Future<Map<String, DateTime>> cutoffs(String callsign) async =>
-      Map<String, DateTime>.of(_values[_normalize(callsign)] ?? const {});
+  Future<Map<String, Set<String>>> hiddenMessageIds(String callsign) async {
+    final stored = _values[_normalize(callsign)] ?? const {};
+    return stored.map((key, value) => MapEntry(key, Set<String>.of(value)));
+  }
 
   @override
-  Future<void> setCutoff(String callsign, String peer, DateTime cutoff) async {
+  Future<void> hideMessages(
+    String callsign,
+    String peer,
+    Iterable<String> messageIds,
+  ) async {
     final owner = _values.putIfAbsent(_normalize(callsign), () => {});
-    final normalizedPeer = _normalize(peer);
-    final next = cutoff.toUtc();
-    final existing = owner[normalizedPeer];
-    if (existing == null || next.isAfter(existing)) owner[normalizedPeer] = next;
+    owner
+        .putIfAbsent(_normalize(peer), () => <String>{})
+        .addAll(messageIds.where((id) => id.isNotEmpty));
   }
 
   static String _normalize(String value) => value.trim().toUpperCase();
