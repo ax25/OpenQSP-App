@@ -91,10 +91,21 @@ final class AprsMessagesTransport
       _lastObservedAprsRejects = _tnc.aprsRejects;
       session.addListener(_onSessionChanged);
       _tnc.addListener(_onTncChanged);
+      _replaySessionMessages();
     }
     _emitConnectionState();
     if (!_serverReachable) {
       throw StateError('APRS OpenQSP session is not available');
+    }
+  }
+
+  void _replaySessionMessages() {
+    for (final object in session.recentMessages) {
+      final message = _fromOpenQspMessage(object);
+      final isNew = _messages.every((existing) => existing.id != message.id);
+      if (!isNew) continue;
+      _messages.add(message);
+      _events.add(MessageReceived(message));
     }
   }
 
