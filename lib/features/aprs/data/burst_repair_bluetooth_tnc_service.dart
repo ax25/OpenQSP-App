@@ -22,12 +22,15 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     this.repairDelay = const Duration(seconds: 2),
     this.repairRetryInterval = const Duration(seconds: 31),
     this.cacheTtl = openQspAprsDefaultTtl,
+    this.completedCacheTtl = const Duration(minutes: 10),
   }) {
     if (repairDelay <= Duration.zero ||
         repairRetryInterval <= Duration.zero ||
-        cacheTtl <= Duration.zero) {
+        cacheTtl <= Duration.zero ||
+        completedCacheTtl <= Duration.zero) {
       throw ArgumentError(
-        'repairDelay, repairRetryInterval and cacheTtl must be positive',
+        'repairDelay, repairRetryInterval, cacheTtl and completedCacheTtl '
+        'must be positive',
       );
     }
     _incomingFrameSubscription = _incomingDecoder.frames.listen(_onIncomingFrame);
@@ -38,6 +41,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   final Duration repairDelay;
   final Duration repairRetryInterval;
   final Duration cacheTtl;
+  final Duration completedCacheTtl;
 
   static const _ax25Decoder = Ax25Decoder();
   static const _ax25Encoder = Ax25Encoder();
@@ -128,8 +132,8 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
             _handleControl(control);
             return;
           }
-          if (aprs.text.startsWith('Q1:')) {
-            _observeIncomingFragment(aprs);
+          if (aprs.text.startsWith('Q1:') && _observeIncomingFragment(aprs)) {
+            return;
           }
         }
       } on Object {
@@ -182,7 +186,9 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     }
   }
 
-  void _observeIncomingFragment(AprsTextMessage message) {
+  /// Returns true when the fragment belongs to a transaction already completed
+  /// by this link and therefore must not be forwarded to the Core reassembler.
+  bool _observeIncomingFragment(AprsTextMessage message) {
     final now = DateTime.now().toUtc();
     _expireCaches(now);
     final fragment = parseFragment(message.text);
@@ -194,7 +200,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       unawaited(
         _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
       );
-      return;
+      return true;
     }
 
     var burst = _receivedBursts[key];
@@ -218,19 +224,25 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       unawaited(
         _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
       );
-      return;
+      return false;
     }
 
     // A newly received fragment gets the short repair grace period. If the
     // following Q1N is itself lost, retries use the much slower RF retry
     // interval instead of continuously transmitting every repairDelay.
     burst.timer = Timer(repairDelay, () => _requestMissing(key));
+    return false;
   }
 
   void _requestMissing(String key) {
     final burst = _receivedBursts[key];
     if (burst == null) return;
     burst.timer = null;
+    final now = DateTime.now().toUtc();
+    if (now.difference(burst.lastSeen) >= cacheTtl) {
+      _receivedBursts.remove(key);
+      return;
+    }
     final missing = <int>{
       for (var index = 0; index < burst.total; index++)
         if (!burst.received.contains(index)) index,
@@ -284,7 +296,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   void _expireCaches(DateTime now) {
     _sentBursts.removeWhere((_, burst) => now.difference(burst.lastSeen) >= cacheTtl);
     _completedReceived.removeWhere(
-      (_, completed) => now.difference(completed) >= cacheTtl,
+      (_, completed) => now.difference(completed) >= completedCacheTtl,
     );
     final expired = <String>[];
     for (final entry in _receivedBursts.entries) {
