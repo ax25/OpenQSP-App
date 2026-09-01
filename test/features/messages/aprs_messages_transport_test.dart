@@ -239,6 +239,44 @@ void main() {
     expect(received.syncCursor, isNull);
   });
 
+  test('MESSAGE received before Messages opens is replayed on connect', () async {
+    await transport.close();
+    _injectObject(
+      service,
+      const OpenQspMessage(
+        sequence: 27,
+        createdAt: 1788290000,
+        author: 'EA3SIL',
+        recipient: 'EA3GNU',
+        body: 'long radio message received while the user is still on Home',
+      ),
+      transactionId: '00A',
+      unsolicited: true,
+    );
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    final lateTransport = AprsMessagesTransport(
+      session: session,
+      callsign: 'EA3GNU',
+      responseTimeout: const Duration(seconds: 1),
+      transactionIdFactory: () => 'L8R',
+    );
+    addTearDown(lateTransport.close);
+    final event = lateTransport.events
+        .where((value) => value is MessageReceived)
+        .cast<MessageReceived>()
+        .first;
+
+    await lateTransport.connect(callsign: 'EA3GNU', token: '');
+    final received = await event;
+
+    expect(received.message.from, 'EA3SIL');
+    expect(received.message.to, 'EA3GNU');
+    expect(received.message.body, contains('received while the user is still on Home'));
+    expect(received.syncCursor, isNull);
+  });
+
   test('sync collects GET_NEW_MESSAGES page until END', () async {
     final event = transport.events
         .where((value) => value is MessageReceived)
