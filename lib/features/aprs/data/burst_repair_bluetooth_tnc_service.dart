@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
+
 import '../aprs/aprs_message_encoder.dart';
 import '../aprs/aprs_packet.dart';
 import '../aprs/aprs_parser.dart';
@@ -132,6 +134,14 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   static bool _isFromOpenQsp(AprsTextMessage message) =>
       message.frame.source.callsign == openQspAprsAddressee;
 
+  static void _debugBurst(String transactionId, {required bool duplicate}) {
+    if (!kDebugMode) return;
+    debugPrint(
+      'OPENQSP | transaction $transactionId | '
+      '${duplicate ? 'DUPLICATE' : 'complete'}',
+    );
+  }
+
   void _handleControl(OpenQspBurstControl control) {
     switch (control) {
       case OpenQspBurstAck(:final transactionId):
@@ -154,6 +164,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     final localIdentity = message.addressee;
 
     if (_completedReceived.containsKey(key)) {
+      _debugBurst(fragment.transactionId, duplicate: true);
       unawaited(
         _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
       );
@@ -177,6 +188,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     if (burst.received.length == burst.total) {
       _receivedBursts.remove(key);
       _completedReceived[key] = now;
+      _debugBurst(fragment.transactionId, duplicate: false);
       unawaited(
         _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
       );
