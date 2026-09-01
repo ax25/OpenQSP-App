@@ -151,7 +151,15 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
         if (burst == null) return;
         for (final index in missing) {
           final bytes = burst.fragments[index];
-          if (bytes != null) unawaited(delegate.sendBytes(bytes));
+          if (bytes != null) {
+            if (kDebugMode) {
+              debugPrint(
+                'TX repair fragment ${index + 1}/${burst.total} '
+                '(transaction $transactionId)',
+              );
+            }
+            unawaited(delegate.sendBytes(bytes));
+          }
         }
     }
   }
@@ -232,6 +240,9 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       source: source,
       information: information,
     );
+    if (kDebugMode) {
+      debugPrint('TX $localIdentity -> $openQspAprsAddressee | OPENQSP | $body');
+    }
     await delegate.sendBytes(
       _kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
     );
