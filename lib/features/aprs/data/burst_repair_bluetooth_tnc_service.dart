@@ -14,11 +14,6 @@ import '../openqsp_carriage/openqsp_aprs_carriage.dart';
 import 'bluetooth_tnc_service.dart';
 
 /// Transaction-level OpenQSP reliability shim for a KISS Bluetooth link.
-///
-/// Q1 data frames are still passed through unchanged. The shim only consumes
-/// transaction controls (`Q1A:TTT` and `Q1N:TTT:MMMM`) and emits them when it
-/// receives an OpenQSP burst. This keeps APRS as a datagram carrier while
-/// OpenQSP owns burst reliability.
 final class BurstRepairBluetoothTncService implements BluetoothTncService {
   BurstRepairBluetoothTncService(
     this.delegate, {
@@ -87,9 +82,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     try {
       final ax25 = _ax25Decoder.decode(frame.payload);
       final aprs = _aprsParser.parse(ax25);
-      if (aprs is! AprsTextMessage || aprs.text.startsWith('Q1:') == false) {
-        return;
-      }
+      if (aprs is! AprsTextMessage || !aprs.text.startsWith('Q1:')) return;
       final fragment = parseFragment(aprs.text);
       final now = DateTime.now().toUtc();
       var burst = _sentBursts[fragment.transactionId];
@@ -100,7 +93,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       burst.fragments[fragment.index] = List<int>.unmodifiable(data);
       burst.lastSeen = now;
     } on Object {
-      // Non-OpenQSP KISS traffic is deliberately transparent to the shim.
+      // Non-OpenQSP KISS traffic is transparent to the shim.
     }
   }
 
@@ -123,21 +116,21 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
           final control = parseOpenQspBurstControl(aprs.text);
           if (control != null) {
             _handleControl(control);
-            return; // Controls belong to this link layer, not to Core decoding.
+            return;
           }
           if (aprs.text.startsWith('Q1:')) {
             _observeIncomingFragment(aprs);
           }
         }
       } on Object {
-        // Preserve malformed/third-party traffic for the normal diagnostics.
+        // Malformed or unrelated traffic continues to the regular decoder.
       }
     }
     _incoming.add(_kissEncoder.encode(frame));
   }
 
   static bool _isFromOpenQsp(AprsTextMessage message) =>
-      message.frame.source.callsign == 'OPENQSP';
+      message.frame.source.callsign == openQspAprsAddressee;
 
   void _handleControl(OpenQspBurstControl control) {
     switch (control) {
@@ -161,7 +154,9 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     final localIdentity = message.addressee;
 
     if (_completedReceived.containsKey(key)) {
-      unawaited(_sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)));
+      unawaited(
+        _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
+      );
       return;
     }
 
@@ -182,7 +177,9 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     if (burst.received.length == burst.total) {
       _receivedBursts.remove(key);
       _completedReceived[key] = now;
-      unawaited(_sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)));
+      unawaited(
+        _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
+      );
       return;
     }
 
@@ -209,7 +206,10 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   Future<void> _sendControl(String localIdentity, String body) async {
     final source = _parseIdentity(localIdentity);
     if (source == null) return;
-    final information = _messageEncoder.encode(addressee: 'OPENQSP', body: body);
+    final information = _messageEncoder.encode(
+      addressee: openQspAprsAddressee,
+      body: body,
+    );
     final ax25 = _ax25Encoder.encodeUi(
       destination: const Ax25Address(
         callsign: 'APOQSP',
@@ -240,10 +240,14 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 
   void _expireCaches(DateTime now) {
     _sentBursts.removeWhere((_, burst) => now.difference(burst.lastSeen) >= cacheTtl);
-    _completedReceived.removeWhere((_, completed) => now.difference(completed) >= cacheTtl);
+    _completedReceived.removeWhere(
+      (_, completed) => now.difference(completed) >= cacheTtl,
+    );
     final expired = <String>[];
     for (final entry in _receivedBursts.entries) {
-      if (now.difference(entry.value.lastSeen) >= cacheTtl) expired.add(entry.key);
+      if (now.difference(entry.value.lastSeen) >= cacheTtl) {
+        expired.add(entry.key);
+      }
     }
     for (final key in expired) {
       _receivedBursts.remove(key)?.timer?.cancel();
@@ -300,13 +304,19 @@ String encodeOpenQspBurstMissing(String transactionId, Set<int> missing) {
     }
     mask |= 1 << index;
   }
-  if (mask == 0) throw ArgumentError.value(missing, 'missing', 'must not be empty');
+  if (mask == 0) {
+    throw ArgumentError.value(missing, 'missing', 'must not be empty');
+  }
   return 'Q1N:$transactionId:${mask.toRadixString(16).toUpperCase().padLeft(4, '0')}';
 }
 
 void _validateTransactionId(String value) {
   if (!RegExp(r'^[0-9A-Z]{3}$').hasMatch(value)) {
-    throw ArgumentError.value(value, 'transactionId', 'must be 3 uppercase base36 characters');
+    throw ArgumentError.value(
+      value,
+      'transactionId',
+      'must be 3 uppercase base36 characters',
+    );
   }
 }
 
@@ -324,6 +334,7 @@ final class _ReceivedBurst {
     required this.localIdentity,
     required this.lastSeen,
   });
+
   final String transactionId;
   final int total;
   final String localIdentity;
