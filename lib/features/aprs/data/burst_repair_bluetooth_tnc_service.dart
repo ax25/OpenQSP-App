@@ -20,10 +20,15 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   BurstRepairBluetoothTncService(
     this.delegate, {
     this.repairDelay = const Duration(seconds: 2),
+    this.repairRetryInterval = const Duration(seconds: 31),
     this.cacheTtl = openQspAprsDefaultTtl,
   }) {
-    if (repairDelay <= Duration.zero || cacheTtl <= Duration.zero) {
-      throw ArgumentError('repairDelay and cacheTtl must be positive');
+    if (repairDelay <= Duration.zero ||
+        repairRetryInterval <= Duration.zero ||
+        cacheTtl <= Duration.zero) {
+      throw ArgumentError(
+        'repairDelay, repairRetryInterval and cacheTtl must be positive',
+      );
     }
     _incomingFrameSubscription = _incomingDecoder.frames.listen(_onIncomingFrame);
     _delegateBytesSubscription = delegate.incomingBytes.listen(_incomingDecoder.add);
@@ -31,6 +36,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 
   final BluetoothTncService delegate;
   final Duration repairDelay;
+  final Duration repairRetryInterval;
   final Duration cacheTtl;
 
   static const _ax25Decoder = Ax25Decoder();
@@ -215,6 +221,9 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       return;
     }
 
+    // A newly received fragment gets the short repair grace period. If the
+    // following Q1N is itself lost, retries use the much slower RF retry
+    // interval instead of continuously transmitting every repairDelay.
     burst.timer = Timer(repairDelay, () => _requestMissing(key));
   }
 
@@ -233,6 +242,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
         encodeOpenQspBurstMissing(burst.transactionId, missing),
       ),
     );
+    burst.timer = Timer(repairRetryInterval, () => _requestMissing(key));
   }
 
   Future<void> _sendControl(String localIdentity, String body) async {
