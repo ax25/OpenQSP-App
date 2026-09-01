@@ -46,6 +46,21 @@ This document tracks known pending work for the OpenQSP client. It is intentiona
   - After timeout, retransmit only fragments that have not been ACKed.
   - Preserve duplicate tolerance and transaction idempotency.
 
+- [ ] **Aggregate fragment reception into one ACK bitmap/range response**
+  - Current behavior under loss is poor: if one or more burst fragments are lost, the transaction can remain stuck until the overall timeout, after which the UI only offers a manual retry.
+  - Replace the train of one APRS ACK per physical fragment with a single compact transaction-level `ACK RECEIVED` response that identifies which fragment indexes were received for a given OpenQSP transaction.
+  - The acknowledgement should fit in one APRS frame for normal burst sizes, for example with a bitmask, compact ranges, or another negotiated representation.
+  - After receiving this aggregate ACK, the sender must immediately determine the missing fragment indexes and retransmit **only those missing fragments**, together as another burst.
+  - Already acknowledged fragments must not be transmitted again.
+  - The same aggregate ACK mechanism can be repeated after a repair burst until the transaction is complete.
+  - Example target flow:
+    - client sends fragments `1 2 3 4 5 6 7` as one burst;
+    - server receives `1 2 4 5 7`;
+    - server sends one compact `ACK RECEIVED: 1,2,4,5,7` (or equivalent bitmap);
+    - client immediately retransmits only `3 6` as one repair burst;
+    - once complete and durably processed, server sends one `STORED`/commit response.
+  - This recovery must be automatic; a missing fragment should not leave the send hanging until a manual retry is offered.
+
 - [ ] **Reduce ACK overhead after successful client→server burst**
   - Real RF test: a 7-fragment `SEND_MESSAGE` burst was fully reassembled and stored by the server, but the return path still produced ACKs for every APRS fragment (`0N` through `0T`), many of them duplicated, before `STORED` arrived.
   - Investigate a negotiated mode where, when the complete burst is received and durably processed, the server can suppress the per-fragment success ACK train and answer with a single transaction-level `STORED`/commit confirmation.
