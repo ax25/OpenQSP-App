@@ -24,7 +24,6 @@ class _ConversationScreenState extends State<ConversationScreen>
   final _composer = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
-  final Set<String> _hiddenMessageIds = {};
   bool _loading = true;
   String? _error;
   int _messageCount = 0;
@@ -156,12 +155,10 @@ class _ConversationScreenState extends State<ConversationScreen>
     });
   }
 
-  void _clearVisibleMessages() {
-    final messages = widget.controller.historyFor(widget.remoteCallsign);
-    if (messages.isEmpty) return;
-    setState(() {
-      _hiddenMessageIds.addAll(messages.map((message) => message.id));
-    });
+  Future<void> _clearConversation() async {
+    await widget.controller.clearConversation(widget.remoteCallsign);
+    if (!mounted) return;
+    _messageCount = 0;
     _composerFocus.requestFocus();
   }
 
@@ -173,10 +170,6 @@ class _ConversationScreenState extends State<ConversationScreen>
     );
     if (sending || text.isEmpty || text.length > maximumMessageLength) return;
 
-    // Sending must never break the active text-input connection. In
-    // particular, do not switch the TextField to readOnly/disabled while the
-    // request is in flight: Android interprets that as a reason to hide the
-    // IME. Keep focus and pin the conversation to its real bottom instead.
     _keepBottomVisibleDuringKeyboardResize = true;
     _composerFocus.requestFocus();
     _scrollToLatest(immediate: true);
@@ -212,10 +205,7 @@ class _ConversationScreenState extends State<ConversationScreen>
 
   @override
   Widget build(BuildContext context) {
-    final allMessages = widget.controller.historyFor(widget.remoteCallsign);
-    final messages = allMessages
-        .where((message) => !_hiddenMessageIds.contains(message.id))
-        .toList(growable: false);
+    final messages = widget.controller.historyFor(widget.remoteCallsign);
     final sending = pendingMessageComposer.isSending(
       widget.controller,
       widget.remoteCallsign,
@@ -224,10 +214,20 @@ class _ConversationScreenState extends State<ConversationScreen>
       appBar: AppBar(
         title: Text(widget.remoteCallsign),
         actions: [
-          TextButton(
-            key: const Key('clearMessages'),
-            onPressed: messages.isEmpty ? null : _clearVisibleMessages,
-            child: const Text('Vaciar mensajes'),
+          PopupMenuButton<String>(
+            key: const Key('conversationMenu'),
+            tooltip: 'Conversation options',
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'clear') _clearConversation();
+            },
+            itemBuilder: (_) => [
+              PopupMenuItem<String>(
+                value: 'clear',
+                enabled: messages.isNotEmpty,
+                child: const Text('Vaciar conversación'),
+              ),
+            ],
           ),
         ],
       ),
