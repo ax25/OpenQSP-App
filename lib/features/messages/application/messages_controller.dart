@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../data/conversation_visibility_store.dart';
 import '../data/local_messages_store.dart';
 import '../data/messages_transport.dart';
 import '../domain/message_models.dart';
@@ -13,19 +14,26 @@ class MessagesController extends ChangeNotifier {
     required this.repository,
     required this.realtime,
     LocalMessagesStore? localStore,
+    ConversationVisibilityStore? visibilityStore,
     this.onAuthenticationRequired,
-  }) : localStore = localStore ?? PreferencesLocalMessagesStore();
+  }) : localStore = localStore ?? PreferencesLocalMessagesStore(),
+       visibilityStore = visibilityStore ??
+           (localStore == null
+               ? PreferencesConversationVisibilityStore()
+               : MemoryConversationVisibilityStore());
 
   final String callsign;
   final String token;
   final MessagesRepository repository;
   final MessagesRealtimeClient realtime;
   final LocalMessagesStore localStore;
+  final ConversationVisibilityStore visibilityStore;
   final Future<void> Function()? onAuthenticationRequired;
   final List<ConversationSummary> conversations = [];
   final Map<String, InternetMessage> _messagesById = {};
   final Map<String, int> _unreadByPeer = {};
   final Map<String, MessageDeliveryStatus> _earlySendStatuses = {};
+  final Map<String, DateTime> _clearBeforeByPeer = {};
   StreamSubscription<MessagingEvent>? _events;
   StreamSubscription<RealtimeConnectionState>? _connections;
   Future<void>? _reconcileInFlight;
@@ -41,11 +49,20 @@ class MessagesController extends ChangeNotifier {
 
   List<InternetMessage> historyFor(String remote) {
     final peer = _key(remote);
+    final cutoff = _clearBeforeByPeer[peer];
+    final result = _allHistoryFor(peer)
+        .where((message) => cutoff == null || message.createdAt.isAfter(cutoff))
+        .toList();
+    return List.unmodifiable(result);
+  }
+
+  List<InternetMessage> _allHistoryFor(String remote) {
+    final peer = _key(remote);
     final result = _messagesById.values
         .where((message) => _key(message.peerFor(callsign)) == peer)
         .toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
-    return List.unmodifiable(result);
+    return result;
   }
 
   Future<void> start() async {
@@ -77,6 +94,9 @@ class MessagesController extends ChangeNotifier {
     notifyListeners();
     try {
       _messagesById.clear();
+      _clearBeforeByPeer
+        ..clear()
+        ..addAll(await visibilityStore.cutoffs(callsign));
       final local = await localStore.messages(callsign);
       final recovered = <InternetMessage>[];
       final changed = <InternetMessage>[];
@@ -202,7 +222,24 @@ class MessagesController extends ChangeNotifier {
       _unreadByPeer[normalized] = 0;
       _rebuildConversations();
       notifyListeners();
-    } on Object {}
+    } on Object {
+      // Mark-read is best effort; local conversation access must still work.
+    }
+  }
+
+  Future<void> clearConversation(String remote) async {
+    final peer = _key(remote);
+    final history = _allHistoryFor(peer);
+    if (history.isEmpty) return;
+    final newest = history.last.createdAt.toUtc();
+    final current = _clearBeforeByPeer[peer];
+    if (current == null || newest.isAfter(current)) {
+      _clearBeforeByPeer[peer] = newest;
+      await visibilityStore.setCutoff(callsign, peer, newest);
+    }
+    _unreadByPeer[peer] = 0;
+    _rebuildConversations();
+    notifyListeners();
   }
 
   void closeConversation() => openRemoteCallsign = null;
@@ -326,11 +363,13 @@ class MessagesController extends ChangeNotifier {
       _unreadByPeer[peer] = 0;
       _rebuildConversations();
       notifyListeners();
-    } on Object {}
+    } on Object {
+      // Mark-read is best effort; realtime delivery remains usable.
+    }
   }
 
   Future<void> _applyReadCursor(String peer, String lastReadMessageId) async {
-    final history = historyFor(peer);
+    final history = _allHistoryFor(peer);
     final target = history.indexWhere((message) => message.id == lastReadMessageId);
     if (target < 0) {
       unawaited(reconcile());
@@ -411,30 +450,35 @@ class MessagesController extends ChangeNotifier {
   };
 
   void _rebuildConversations() {
-    final latestByPeer = <String, InternetMessage>{};
+    final latestAllByPeer = <String, InternetMessage>{};
+    final latestVisibleByPeer = <String, InternetMessage>{};
     for (final message in _messagesById.values) {
       final peer = _key(message.peerFor(callsign));
-      final previous = latestByPeer[peer];
-      if (previous == null || message.createdAt.isAfter(previous.createdAt)) {
-        latestByPeer[peer] = message;
+      final previousAll = latestAllByPeer[peer];
+      if (previousAll == null || message.createdAt.isAfter(previousAll.createdAt)) {
+        latestAllByPeer[peer] = message;
+      }
+      final cutoff = _clearBeforeByPeer[peer];
+      if (cutoff != null && !message.createdAt.isAfter(cutoff)) continue;
+      final previousVisible = latestVisibleByPeer[peer];
+      if (previousVisible == null ||
+          message.createdAt.isAfter(previousVisible.createdAt)) {
+        latestVisibleByPeer[peer] = message;
       }
     }
     conversations
       ..clear()
       ..addAll(
-        latestByPeer.entries.map(
+        latestAllByPeer.entries.map(
           (entry) => ConversationSummary(
             remoteCallsign: entry.key,
-            latestMessage: entry.value,
+            latestMessage: latestVisibleByPeer[entry.key],
+            lastActivityAt: latestVisibleByPeer[entry.key]?.createdAt ?? entry.value.createdAt,
             unreadCount: _unreadByPeer[entry.key] ?? 0,
           ),
         ),
       )
-      ..sort(
-        (a, b) => b.latestMessage.createdAt.compareTo(
-          a.latestMessage.createdAt,
-        ),
-      );
+      ..sort((a, b) => b.lastActivityAt.compareTo(a.lastActivityAt));
   }
 
   String _key(String value) => value.trim().toUpperCase();

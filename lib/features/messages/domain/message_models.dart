@@ -89,19 +89,24 @@ class ConversationSummary {
   const ConversationSummary({
     required this.remoteCallsign,
     required this.latestMessage,
+    required this.lastActivityAt,
     this.unreadCount = 0,
   });
 
   final String remoteCallsign;
-  final InternetMessage latestMessage;
+  final InternetMessage? latestMessage;
+  final DateTime lastActivityAt;
   final int unreadCount;
 
   ConversationSummary copyWith({
     InternetMessage? latestMessage,
+    DateTime? lastActivityAt,
     int? unreadCount,
+    bool clearLatestMessage = false,
   }) => ConversationSummary(
     remoteCallsign: remoteCallsign,
-    latestMessage: latestMessage ?? this.latestMessage,
+    latestMessage: clearLatestMessage ? null : latestMessage ?? this.latestMessage,
+    lastActivityAt: lastActivityAt ?? this.lastActivityAt,
     unreadCount: unreadCount ?? this.unreadCount,
   );
 }
