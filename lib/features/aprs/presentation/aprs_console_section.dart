@@ -60,7 +60,7 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
           children: [
             Expanded(
               child: Text(
-                'Tráfico recibido y transmitido por la TNC KISS.',
+                'Traffic received and transmitted by the KISS TNC.',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -68,7 +68,7 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
               key: const Key('clearAprsConsole'),
               onPressed: entries.isEmpty ? null : widget.controller.clearAprsConsole,
               icon: const Icon(Icons.delete_outline, size: 18),
-              label: const Text('Limpiar'),
+              label: const Text('Clear'),
             ),
           ],
         ),
@@ -85,7 +85,7 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
           child: entries.isEmpty
               ? const Center(
                   child: Text(
-                    'Sin tráfico APRS todavía',
+                    'No APRS traffic yet',
                     style: TextStyle(color: Colors.grey),
                   ),
                 )
