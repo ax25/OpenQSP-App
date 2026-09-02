@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import '../aprs/aprs_packet.dart';
 import '../aprs/aprs_parser.dart';
 import '../ax25/ax25_decoder.dart';
 import '../ax25/ax25_encoder.dart';
+import '../domain/aprs_path.dart';
 import '../domain/tnc_device.dart';
 import '../kiss/kiss_decoder.dart';
 import '../kiss/kiss_encoder.dart';
@@ -78,8 +81,8 @@ final class AprsPathBluetoothTncService implements BluetoothTncService {
     KissFrame? result;
     final subscription = decoder.frames.listen((frame) => result ??= frame);
     decoder.add(data);
-    subscription.cancel();
-    decoder.close();
+    unawaited(subscription.cancel());
+    unawaited(decoder.close());
     return result;
   }
 }
