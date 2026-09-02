@@ -22,7 +22,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     this.delegate, {
     this.repairDelay = const Duration(seconds: 5),
     this.finalFragmentRepairDelay = const Duration(seconds: 2),
-    this.repairRetryInterval = const Duration(seconds: 31),
+    this.repairRetryInterval = const Duration(seconds: 15),
     this.cacheTtl = openQspAprsDefaultTtl,
     this.completedCacheTtl = const Duration(minutes: 10),
   }) {
@@ -137,7 +137,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
         if (aprs is AprsTextMessage && _isFromOpenQsp(aprs)) {
           final storedTransaction = parseOpenQspStoredControl(aprs.text);
           if (storedTransaction != null) {
-            _forwardCompactStored(ax25, aprs, storedTransaction);
+            _forwardCompactStored(aprs, storedTransaction);
             return;
           }
           final control = parseOpenQspBurstControl(aprs.text);
@@ -158,13 +158,14 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   }
 
   void _forwardCompactStored(
-    Ax25Frame ax25,
     AprsTextMessage message,
     String transactionId,
   ) {
     final transaction = decodeBase36(transactionId, 3);
     // Core STORED is 01 44 00 00. Build a one-fragment Q2 envelope for
-    // downstream consumers. This synthetic frame never goes on RF.
+    // downstream consumers. Preserve the logical third-party OpenQSP source
+    // and destination rather than the outer RF/IGate AX.25 wrapper. This
+    // synthetic frame never goes on RF.
     final syntheticBody =
         'Q2${encodeOpenQspBase91([transaction, 0x00, 0x01, 0x44, 0x00, 0x00])}';
     final information = _messageEncoder.encode(
@@ -172,8 +173,8 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       body: syntheticBody,
     );
     final syntheticAx25 = _ax25Encoder.encodeUi(
-      destination: ax25.destination,
-      source: ax25.source,
+      destination: message.frame.destination,
+      source: message.frame.source,
       information: information,
     );
     _incoming.add(
