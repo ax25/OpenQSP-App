@@ -75,11 +75,11 @@ void main() {
     );
     await tester.pumpWidget(subject(controller));
     await tester.pump();
-    expect(find.text('Diagnóstico KISS'), findsNothing);
-    expect(find.text('Diagnóstico AX.25'), findsNothing);
-    expect(find.text('Diagnóstico APRS'), findsNothing);
+    expect(find.text('KISS diagnostics'), findsNothing);
+    expect(find.text('AX.25 diagnostics'), findsNothing);
+    expect(find.text('APRS diagnostics'), findsNothing);
     final button = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Comprobar OpenQSP'),
+      find.widgetWithText(FilledButton, 'Check OpenQSP'),
     );
     expect(button.onPressed, isNull);
   });
@@ -88,11 +88,11 @@ void main() {
     final controller = await connectedController(timeout: const Duration(milliseconds: 10));
     await tester.pumpWidget(subject(controller));
     await tester.pump();
-    await tester.tap(find.text('Comprobar OpenQSP'));
+    await tester.tap(find.text('Check OpenQSP'));
     await tester.pump();
-    expect(find.text('Esperando respuesta…'), findsOneWidget);
+    expect(find.text('Waiting for response…'), findsOneWidget);
     await tester.pump(const Duration(milliseconds: 20));
-    expect(find.text('Sin respuesta'), findsOneWidget);
+    expect(find.text('No response'), findsOneWidget);
   });
 
   testWidgets('valid CAPABILITIES displays available', (tester) async {
@@ -100,7 +100,7 @@ void main() {
     final service = controller.service as _Service;
     await tester.pumpWidget(subject(controller));
     await tester.pump();
-    await tester.tap(find.text('Comprobar OpenQSP'));
+    await tester.tap(find.text('Check OpenQSP'));
     await tester.pump();
     final ax25 = const Ax25Encoder().encodeUi(
       destination: const Ax25Address(callsign: openQspAprsTocall, ssid: 0, hasBeenRepeated: false, isLast: false),
@@ -109,7 +109,7 @@ void main() {
     );
     service.input.add(const KissEncoder().encode(KissFrame(port: 0, command: 0, payload: ax25)));
     await tester.pump();
-    expect(find.text('Disponible'), findsOneWidget);
+    expect(find.text('Available'), findsOneWidget);
     expect(find.text('0x0000000F'), findsOneWidget);
   });
 }
