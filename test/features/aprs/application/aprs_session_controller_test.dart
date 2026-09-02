@@ -233,10 +233,29 @@ void main() {
     expect(session.supportsAprsCommitAck, isFalse);
   });
 
+  test('one-fragment control response never flashes receive indicator', () async {
+    session.dispose();
+    session = AprsSessionController(
+      tncController: tnc,
+      receiveIndicatorDelay: const Duration(milliseconds: 5),
+    );
+
+    await session.activate();
+    service.receiveCapabilities();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.messageReceiveState, AprsMessageReceiveState.hidden);
+
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+    expect(session.messageReceiveState, AprsMessageReceiveState.hidden);
+  });
+
   test('receive indicator fails after silence, hides at TTL and recovers', () async {
     session.dispose();
     session = AprsSessionController(
       tncController: tnc,
+      receiveIndicatorDelay: const Duration(milliseconds: 2),
       receiveFailureDelay: const Duration(milliseconds: 15),
       receiveHideDelay: const Duration(milliseconds: 35),
       receiveCompletedVisibleDuration: const Duration(milliseconds: 10),
@@ -251,10 +270,10 @@ void main() {
     final fragments = service.messageFragments();
     expect(fragments.length, greaterThan(1));
     service.receiveFragment(fragments.first);
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 4));
     expect(session.messageReceiveState, AprsMessageReceiveState.receiving);
 
-    await Future<void>.delayed(const Duration(milliseconds: 20));
+    await Future<void>.delayed(const Duration(milliseconds: 16));
     expect(session.messageReceiveState, AprsMessageReceiveState.failed);
 
     await Future<void>.delayed(const Duration(milliseconds: 20));
