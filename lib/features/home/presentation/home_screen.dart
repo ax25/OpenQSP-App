@@ -247,8 +247,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _openMessages(controller, aprsSession: session);
       return;
     }
-    if (_serverState == ServerConnectionState.unavailable ||
-        _serverState == ServerConnectionState.checking) {
+    if (_serverState == ServerConnectionState.checking) {
+      await _checkServer();
+      if (!mounted || _aprsActive) return;
+    }
+    if (_serverState == ServerConnectionState.unavailable) {
       _showMessage('Server unavailable');
       return;
     }
