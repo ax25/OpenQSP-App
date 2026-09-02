@@ -70,6 +70,8 @@ final class AprsMessagesTransport
       session.state == AprsSessionState.available ||
       session.state == AprsSessionState.slow;
 
+  bool get _messageReceptionInProgress => session.hasMessageReceiveIndicator;
+
   @override
   String get syncCursorKey => 'aprs';
 
@@ -356,6 +358,21 @@ final class AprsMessagesTransport
   Future<SyncBatch> sync({required String token, String? cursor}) {
     final active = _syncInFlight;
     if (active != null) return active;
+
+    // Entering Messages normally starts an automatic GET_NEW_MESSAGES. If an
+    // OpenQSP frame is already arriving (including its 60-120 s recovery
+    // window, or the short completed indicator), do not inject a second radio
+    // request into the same half-duplex exchange. The incoming frame continues
+    // to be delivered through the realtime stream and the next later sync can
+    // use the unchanged cursor.
+    if (_messageReceptionInProgress) {
+      if (kDebugMode) {
+        debugPrint('APRS MESSAGES | skip sync: message reception in progress');
+      }
+      return Future<SyncBatch>.value(
+        SyncBatch(messages: const [], cursor: cursor ?? '0'),
+      );
+    }
 
     final future = _syncOne(cursor);
     _syncInFlight = future;
