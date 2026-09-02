@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../../core/openqsp_protocol/openqsp_codec.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../aprs/aprs_message_encoder.dart';
+import '../aprs/aprs_packet.dart';
 import '../ax25/ax25_address.dart';
 import '../ax25/ax25_encoder.dart';
 import '../data/bluetooth_tnc_service.dart';
