@@ -383,7 +383,7 @@ final class OpenQspAprsReassembler {
 
   final Duration ttl;
   final int maxEntries;
-  final Map<_AssemblyKey, _Assembly> _assemblies = {};
+  final Map<String, _Assembly> _assemblies = {};
 
   Uint8List? add({
     required String peer,
