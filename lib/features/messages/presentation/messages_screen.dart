@@ -13,9 +13,11 @@ class MessagesScreen extends StatefulWidget {
     super.key,
     required this.controller,
     this.aprsSession,
+    this.manageControllerLifecycle = true,
   });
   final MessagesController controller;
   final AprsSessionController? aprsSession;
+  final bool manageControllerLifecycle;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -28,7 +30,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
   void initState() {
     super.initState();
     widget.controller.addListener(_changed);
-    widget.controller.start();
+    if (widget.manageControllerLifecycle) widget.controller.start();
   }
 
   void _changed() {
@@ -47,9 +49,8 @@ class _MessagesScreenState extends State<MessagesScreen> {
 
   @override
   void dispose() {
-    widget.controller
-      ..removeListener(_changed)
-      ..dispose();
+    widget.controller.removeListener(_changed);
+    if (widget.manageControllerLifecycle) widget.controller.dispose();
     super.dispose();
   }
 
