@@ -245,11 +245,16 @@ final class OpenQspAprsFragment {
   }
 }
 
-/// Default outbound fragmentation: compact APRS V2.
+/// Default outbound fragmentation: compact APRS V2. Older callers may still
+/// provide a three-character transaction from the Q1 space; map it to the Q2
+/// 8-bit wire space at the carriage boundary.
 List<OpenQspAprsFragment> fragmentFrame(
   Uint8List frame,
   String transactionId,
-) => fragmentFrameV2(frame, transactionId);
+) {
+  final legacyValue = decodeBase36(transactionId, 3);
+  return fragmentFrameV2(frame, encodeBase36(legacyValue & 0xff, 3));
+}
 
 /// Legacy Q1 fragmentation retained for compatibility tests/migration tools.
 List<OpenQspAprsFragment> fragmentFrameV1(
