@@ -59,11 +59,12 @@ void main() {
     await link.close();
   });
 
-  test('extra fragment after completion sends recovery ACK immediately', () async {
+  test('extra fragment after completion obeys recovery ACK cooldown', () async {
     final delegate = _FakeBluetoothTncService();
     final link = BurstRepairBluetoothTncService(
       delegate,
       finalFragmentRepairDelay: const Duration(milliseconds: 10),
+      duplicateAckMinInterval: const Duration(milliseconds: 40),
     );
     final subscription = link.incomingBytes.listen((_) {});
     final packet = _kissMessage(
@@ -81,8 +82,18 @@ void main() {
 
     expect(
       _acks(delegate.sent, '006'),
+      hasLength(1),
+      reason: 'duplicates inside the cooldown must not emit another ACK',
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    delegate.emit(packet);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      _acks(delegate.sent, '006'),
       hasLength(2),
-      reason: 'any later fragment of an already-complete transaction must ACK again',
+      reason: 'a later duplicate may emit one recovery ACK after the cooldown',
     );
 
     await subscription.cancel();
