@@ -78,7 +78,8 @@ final class AprsSessionController extends ChangeNotifier {
   AprsActivityState get activityState => _activityState;
   AprsMessageReceiveState get messageReceiveState => _messageReceiveState;
   String? get messageReceivePeer => _messageReceivePeer;
-  bool get hasMessageReceiveIndicator => false;
+  bool get hasMessageReceiveIndicator =>
+      _messageReceiveState != AprsMessageReceiveState.hidden;
   bool get showMessageReceiveIndicator =>
       _messageReceiveState != AprsMessageReceiveState.hidden &&
       (_messageReceiveState != AprsMessageReceiveState.receiving ||
