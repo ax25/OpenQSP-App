@@ -8,6 +8,7 @@ import '../aprs/aprs_parser.dart';
 import '../ax25/ax25_address.dart';
 import '../ax25/ax25_decoder.dart';
 import '../ax25/ax25_encoder.dart';
+import '../ax25/ax25_frame.dart';
 import '../domain/tnc_device.dart';
 import '../kiss/kiss_decoder.dart';
 import '../kiss/kiss_encoder.dart';
@@ -21,7 +22,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     this.delegate, {
     this.repairDelay = const Duration(seconds: 5),
     this.finalFragmentRepairDelay = const Duration(seconds: 2),
-    this.repairRetryInterval = const Duration(seconds: 31),
+    this.repairRetryInterval = const Duration(seconds: 15),
     this.cacheTtl = openQspAprsDefaultTtl,
     this.completedCacheTtl = const Duration(minutes: 10),
   }) {
@@ -100,7 +101,10 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     try {
       final ax25 = _ax25Decoder.decode(frame.payload);
       final aprs = _aprsParser.parse(ax25);
-      if (aprs is! AprsTextMessage || !aprs.text.startsWith('Q1:')) return;
+      if (aprs is! AprsTextMessage ||
+          !(aprs.text.startsWith('Q2') || aprs.text.startsWith('Q1:'))) {
+        return;
+      }
       final fragment = parseFragment(aprs.text);
       final now = DateTime.now().toUtc();
       var burst = _sentBursts[fragment.transactionId];
@@ -131,12 +135,18 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
         final ax25 = _ax25Decoder.decode(frame.payload);
         final aprs = _aprsParser.parse(ax25);
         if (aprs is AprsTextMessage && _isFromOpenQsp(aprs)) {
+          final storedTransaction = parseOpenQspStoredControl(aprs.text);
+          if (storedTransaction != null) {
+            _forwardCompactStored(aprs, storedTransaction);
+            return;
+          }
           final control = parseOpenQspBurstControl(aprs.text);
           if (control != null) {
             _handleControl(control);
             return;
           }
-          if (aprs.text.startsWith('Q1:') && _observeIncomingFragment(aprs)) {
+          if ((aprs.text.startsWith('Q2') || aprs.text.startsWith('Q1:')) &&
+              _observeIncomingFragment(aprs)) {
             return;
           }
         }
@@ -145,6 +155,33 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       }
     }
     _incoming.add(_kissEncoder.encode(frame));
+  }
+
+  void _forwardCompactStored(
+    AprsTextMessage message,
+    String transactionId,
+  ) {
+    final transaction = decodeBase36(transactionId, 3);
+    // Core STORED is 01 44 00 00. Build a one-fragment Q2 envelope for
+    // downstream consumers. Preserve the logical third-party OpenQSP source
+    // and destination rather than the outer RF/IGate AX.25 wrapper. This
+    // synthetic frame never goes on RF.
+    final syntheticBody =
+        'Q2${encodeOpenQspBase91([transaction, 0x00, 0x01, 0x44, 0x00, 0x00])}';
+    final information = _messageEncoder.encode(
+      addressee: message.addressee,
+      body: syntheticBody,
+    );
+    final syntheticAx25 = _ax25Encoder.encodeUi(
+      destination: message.frame.destination,
+      source: message.frame.source,
+      information: information,
+    );
+    _incoming.add(
+      _kissEncoder.encode(
+        KissFrame(port: 0, command: 0, payload: syntheticAx25),
+      ),
+    );
   }
 
   static bool _isFromOpenQsp(AprsTextMessage message) =>
@@ -190,8 +227,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     }
   }
 
-  /// Returns true when the fragment belongs to a transaction already completed
-  /// by this link and therefore must not be forwarded to the Core reassembler.
   bool _observeIncomingFragment(AprsTextMessage message) {
     final now = DateTime.now().toUtc();
     _expireCaches(now);
@@ -240,10 +275,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       return false;
     }
 
-    // While the final fragment has not been observed, keep a longer quiet
-    // period so a half-duplex transmitter can finish the original burst before
-    // the client emits Q1N. Seeing N/N proves the initial burst has ended, so
-    // missing-fragment repair can use the shorter grace from that point on.
     final delay = burst.finalFragmentSeen
         ? finalFragmentRepairDelay
         : repairDelay;
@@ -291,7 +322,17 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       source: source,
       information: information,
     );
-    _debugTx('TX $localIdentity -> $openQspAprsAddressee | OPENQSP | $body');
+    final storedTransaction = parseOpenQspStoredControl(body);
+    final control = parseOpenQspBurstControl(body);
+    final detail = storedTransaction != null
+        ? 'STORED | txn=$storedTransaction'
+        : switch (control) {
+            OpenQspBurstAck(:final transactionId) => 'ACK | txn=$transactionId',
+            OpenQspBurstMissing(:final transactionId, :final missing) =>
+              'NACK | txn=$transactionId | missing=${missing.map((index) => index + 1).join(',')}',
+            null => body,
+          };
+    _debugTx('TX $localIdentity -> $openQspAprsAddressee | OPENQSP | $detail');
     await delegate.sendBytes(
       _kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
     );
@@ -311,7 +352,9 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   }
 
   void _expireCaches(DateTime now) {
-    _sentBursts.removeWhere((_, burst) => now.difference(burst.lastSeen) >= cacheTtl);
+    _sentBursts.removeWhere(
+      (_, burst) => now.difference(burst.lastSeen) >= cacheTtl,
+    );
     _completedReceived.removeWhere(
       (_, completed) => now.difference(completed) >= completedCacheTtl,
     );
@@ -353,7 +396,42 @@ final class OpenQspBurstMissing extends OpenQspBurstControl {
   final Set<int> missing;
 }
 
+String? parseOpenQspStoredControl(String body) {
+  if (!body.startsWith('S2')) return null;
+  try {
+    final payload = decodeOpenQspBase91(body.substring(2));
+    if (payload.length != 1) return null;
+    return encodeBase36(payload[0], 3);
+  } on Object {
+    return null;
+  }
+}
+
 OpenQspBurstControl? parseOpenQspBurstControl(String body) {
+  if (body.startsWith('A2')) {
+    try {
+      final payload = decodeOpenQspBase91(body.substring(2));
+      if (payload.length != 1) return null;
+      return OpenQspBurstAck(encodeBase36(payload[0], 3));
+    } on Object {
+      return null;
+    }
+  }
+  if (body.startsWith('N2')) {
+    try {
+      final payload = decodeOpenQspBase91(body.substring(2));
+      if (payload.length != 3) return null;
+      final mask = (payload[1] << 8) | payload[2];
+      if (mask == 0) return null;
+      return OpenQspBurstMissing(encodeBase36(payload[0], 3), {
+        for (var index = 0; index < 16; index++)
+          if ((mask & (1 << index)) != 0) index,
+      });
+    } on Object {
+      return null;
+    }
+  }
+
   final ack = RegExp(r'^Q1A:([0-9A-Z]{3})$').firstMatch(body);
   if (ack != null) return OpenQspBurstAck(ack.group(1)!);
   final nack = RegExp(r'^Q1N:([0-9A-Z]{3}):([0-9A-F]{4})$').firstMatch(body);
@@ -367,12 +445,12 @@ OpenQspBurstControl? parseOpenQspBurstControl(String body) {
 }
 
 String encodeOpenQspBurstAck(String transactionId) {
-  _validateTransactionId(transactionId);
-  return 'Q1A:$transactionId';
+  final transaction = _validateQ2TransactionId(transactionId);
+  return 'A2${encodeOpenQspBase91([transaction])}';
 }
 
 String encodeOpenQspBurstMissing(String transactionId, Set<int> missing) {
-  _validateTransactionId(transactionId);
+  final transaction = _validateQ2TransactionId(transactionId);
   var mask = 0;
   for (final index in missing) {
     if (index < 0 || index >= openQspAprsMaxFragments) {
@@ -383,10 +461,10 @@ String encodeOpenQspBurstMissing(String transactionId, Set<int> missing) {
   if (mask == 0) {
     throw ArgumentError.value(missing, 'missing', 'must not be empty');
   }
-  return 'Q1N:$transactionId:${mask.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+  return 'N2${encodeOpenQspBase91([transaction, mask >> 8, mask & 0xff])}';
 }
 
-void _validateTransactionId(String value) {
+int _validateQ2TransactionId(String value) {
   if (!RegExp(r'^[0-9A-Z]{3}$').hasMatch(value)) {
     throw ArgumentError.value(
       value,
@@ -394,6 +472,11 @@ void _validateTransactionId(String value) {
       'must be 3 uppercase base36 characters',
     );
   }
+  final decoded = decodeBase36(value, 3);
+  if (decoded > 0xff) {
+    throw ArgumentError.value(value, 'transactionId', 'must fit in 8 bits for Q2');
+  }
+  return decoded;
 }
 
 final class _SentBurst {

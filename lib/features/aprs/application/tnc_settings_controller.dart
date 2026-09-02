@@ -200,12 +200,24 @@ class TncSettingsController extends ChangeNotifier {
   static String _singleLine(String value) =>
       value.replaceAll('\r', ' ').replaceAll('\n', ' ').trim();
 
+  static bool _isOpenQspWireText(String text) =>
+      text.startsWith('Q1:') ||
+      text.startsWith('Q2') ||
+      text.startsWith('Q1A:') ||
+      text.startsWith('Q1N:') ||
+      text.startsWith('A2') ||
+      text.startsWith('N2') ||
+      text.startsWith('S2');
+
+  static bool _isOpenQspControlText(String text) =>
+      text.startsWith('Q1A:') ||
+      text.startsWith('Q1N:') ||
+      text.startsWith('A2') ||
+      text.startsWith('N2') ||
+      text.startsWith('S2');
+
   static String _trafficType(AprsPacket packet) => switch (packet) {
-    AprsTextMessage(:final text)
-        when text.startsWith('Q1:') ||
-            text.startsWith('Q1A:') ||
-            text.startsWith('Q1N:') =>
-      'OPENQSP',
+    AprsTextMessage(:final text) when _isOpenQspWireText(text) => 'OPENQSP',
     AprsTextMessage() => 'MESSAGE',
     AprsAck() => 'ACK',
     AprsReject() => 'REJECT',
@@ -222,10 +234,10 @@ class TncSettingsController extends ChangeNotifier {
 
   String _trafficContent(AprsPacket packet, {required bool transmitted}) {
     return switch (packet) {
-      AprsTextMessage(:final text) when text.startsWith('Q1:') =>
-        _humanizeOpenQspAprs(packet, transmitted: transmitted),
       AprsTextMessage(:final text)
-          when text.startsWith('Q1A:') || text.startsWith('Q1N:') =>
+          when text.startsWith('Q1:') || text.startsWith('Q2') =>
+        _humanizeOpenQspAprs(packet, transmitted: transmitted),
+      AprsTextMessage(:final text) when _isOpenQspControlText(text) =>
         _humanizeOpenQspControl(text),
       AprsTextMessage(:final text, :final messageId) =>
         messageId == null ? text : '$text [message id $messageId]',
@@ -237,8 +249,38 @@ class TncSettingsController extends ChangeNotifier {
   }
 
   static String _humanizeOpenQspControl(String text) {
+    if (text.startsWith('A2') || text.startsWith('S2')) {
+      try {
+        final payload = decodeOpenQspBase91(text.substring(2));
+        if (payload.length == 1) {
+          final transaction = encodeBase36(payload[0], 3);
+          return '${text.startsWith('A2') ? 'ACK' : 'STORED'} | txn=$transaction';
+        }
+      } on Object {
+        // Fall through to the generic control text below.
+      }
+    }
+    if (text.startsWith('N2')) {
+      try {
+        final payload = decodeOpenQspBase91(text.substring(2));
+        if (payload.length == 3) {
+          final transaction = encodeBase36(payload[0], 3);
+          final mask = (payload[1] << 8) | payload[2];
+          if (mask != 0) {
+            final missing = <String>[
+              for (var index = 0; index < 16; index++)
+                if ((mask & (1 << index)) != 0) '${index + 1}',
+            ];
+            return 'NACK | txn=$transaction | missing=${missing.join(',')} | '
+                'mask=0x${mask.toRadixString(16).toUpperCase().padLeft(4, '0')}';
+          }
+        }
+      } on Object {
+        // Fall through to the generic control text below.
+      }
+    }
     if (text.startsWith('Q1A:')) {
-      return 'transaction ${text.substring(4)} acknowledged';
+      return 'ACK | txn=${text.substring(4)} | legacy=Q1';
     }
     final parts = text.split(':');
     if (parts.length == 3 && parts.first == 'Q1N') {
@@ -248,11 +290,11 @@ class TncSettingsController extends ChangeNotifier {
         for (var index = 0; index < 16; index++) {
           if ((mask & (1 << index)) != 0) missing.add('${index + 1}');
         }
-        return 'transaction ${parts[1]} missing fragments '
-            '${missing.isEmpty ? '-' : missing.join(',')} (mask 0x${parts[2]})';
+        return 'NACK | txn=${parts[1]} | missing=${missing.join(',')} | '
+            'mask=0x${parts[2]} | legacy=Q1';
       }
     }
-    return 'OpenQSP control $text';
+    return 'unrecognized OpenQSP control';
   }
 
   String _humanizeOpenQspAprs(
@@ -261,6 +303,7 @@ class TncSettingsController extends ChangeNotifier {
   }) {
     try {
       final fragment = parseFragment(packet.text);
+      final profile = 'Q${fragment.version}';
       final reassembler = transmitted
           ? _trafficTxReassembler
           : _trafficRxReassembler;
@@ -269,40 +312,40 @@ class TncSettingsController extends ChangeNotifier {
         fragment: fragment,
         now: DateTime.now().toUtc(),
       );
+      final metadata =
+          'txn=${fragment.transactionId} | fragment=${fragment.index + 1}/${fragment.total}';
       if (bytes == null) {
-        return 'fragment ${fragment.index + 1}/${fragment.total} '
-            '(transaction ${fragment.transactionId})';
+        return 'DATA | $metadata | profile=$profile';
       }
       final decoded = _openQspCodec.decode(bytes);
-      return _describeOpenQspObject(decoded.object);
+      return '${_describeOpenQspObject(decoded.object)} | $metadata | profile=$profile';
     } on Object {
-      return 'unrecognized OpenQSP data: ${packet.text}';
+      return 'unrecognized OpenQSP data';
     }
   }
 
   static String _describeOpenQspObject(OpenQspFrameObject object) => switch (object) {
     OpenQspSendMessage(:final recipient, :final body) =>
-      'send message to $recipient: "$body"',
+      'SEND_MESSAGE to=$recipient body="$body"',
     OpenQspGetNewMessages(:final since, :final max) =>
-      'request new messages since $since (max $max)',
+      'GET_NEW_MESSAGES since=$since max=$max',
     OpenQspGetNewBulletins(:final since, :final max) =>
-      'request new bulletins since $since (max $max)',
-    OpenQspGetBulletin(:final sequence) => 'request bulletin $sequence',
-    OpenQspGetCapabilities() => 'request server capabilities',
+      'GET_NEW_BULLETINS since=$since max=$max',
+    OpenQspGetBulletin(:final sequence) => 'GET_BULLETIN sequence=$sequence',
+    OpenQspGetCapabilities() => 'GET_CAPABILITIES',
     OpenQspMessage(:final author, :final recipient, :final body, :final sequence) =>
-      'message #$sequence from $author to $recipient: "$body"',
+      'MESSAGE seq=$sequence from=$author to=$recipient body="$body"',
     OpenQspBulletinHeader(:final author, :final title, :final sequence) =>
-      'bulletin #$sequence by $author: "$title"',
+      'BULLETIN_HEADER seq=$sequence from=$author title="$title"',
     OpenQspBulletin(:final author, :final title, :final body, :final sequence) =>
-      'bulletin #$sequence by $author: "$title" — $body',
+      'BULLETIN seq=$sequence from=$author title="$title" body="$body"',
     OpenQspEnd(:final returnedCount, :final hasMore, :final nextSince) =>
-      'end of response: $returnedCount returned, next=$nextSince, '
-          'more=${hasMore ? 'yes' : 'no'}',
-    OpenQspStored() => 'stored by OpenQSP server',
+      'END returned=$returnedCount next=$nextSince more=${hasMore ? 'yes' : 'no'}',
+    OpenQspStored() => 'STORED',
     OpenQspError(:final errorCode, :final detail) =>
-      'OpenQSP error $errorCode${detail.isEmpty ? '' : ': $detail'}',
+      'ERROR code=$errorCode${detail.isEmpty ? '' : ' detail="$detail"'}',
     OpenQspCapabilities(:final protocolVersion, :final capabilities) =>
-      'server capabilities: protocol v$protocolVersion, mask $capabilities',
+      'CAPABILITIES protocol=$protocolVersion mask=$capabilities',
   };
 
   static String _humanizeAprsUnknown(AprsUnknown packet) {
@@ -539,9 +582,8 @@ class TncSettingsController extends ChangeNotifier {
           if (packet.igate case final igate?) {
             lastOpenQspIgate = igate.toString();
           }
-          // Q1 reliability is handled exclusively by
-          // BurstRepairBluetoothTncService using Q1A/Q1N. Never emit legacy
-          // APRS ackNN responses for OpenQSP fragments here.
+          // OpenQSP transaction reliability is handled below the Core by the
+          // burst-repair shim. Never emit native APRS ackNN for Q1/Q2 data.
           _decodeOpenQsp(packet);
         }
         break;

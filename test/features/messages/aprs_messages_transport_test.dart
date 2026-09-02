@@ -84,7 +84,7 @@ void main() {
       session: session,
       callsign: 'EA3GNU',
       responseTimeout: const Duration(seconds: 1),
-      transactionIdFactory: () => 'ABC',
+      transactionIdFactory: () => '014',
     );
     await transport.connect(callsign: 'EA3GNU', token: '');
     service.sentBytes.clear();
@@ -98,16 +98,7 @@ void main() {
     await service.losses.close();
   });
 
-  test('commit ACK mode marks SEND_MESSAGE stored from ackCxx', () async {
-    _injectObject(
-      service,
-      const OpenQspCapabilities(protocolVersion: 1, capabilities: 0x1f),
-      transactionId: 'CAP',
-    );
-    await Future<void>.delayed(Duration.zero);
-    await Future<void>.delayed(Duration.zero);
-    expect(session.supportsAprsCommitAck, isTrue);
-
+  test('Q2 SEND_MESSAGE is marked stored by matching STORED response', () async {
     final storedEvent = transport.events
         .where(
           (value) =>
@@ -119,38 +110,38 @@ void main() {
 
     final message = await transport.send(
       callsign: 'EA3GNU',
-      remoteCallsign: 'EA3ABC',
-      text: 'hola por radio',
+      remoteCallsign: 'EA3SIL',
+      text: 'good morning',
       token: '',
     );
 
-    expect(message.from, 'EA3GNU');
-    expect(message.to, 'EA3ABC');
-    expect(message.body, 'hola por radio');
     expect(message.deliveryStatus, MessageDeliveryStatus.processing);
-
     await Future<void>.delayed(Duration.zero);
     expect(service.sentBytes, isNotEmpty);
-    _injectAck(service, messageId: 'C00');
+
+    _injectObject(service, const OpenQspStored(), transactionId: '014');
 
     final update = await storedEvent;
     expect(update.messageId, message.id);
     final history = await transport.messages(callsign: 'EA3GNU', token: '');
-    expect(history.single.deliveryStatus, MessageDeliveryStatus.stored);
+    expect(
+      history.singleWhere((value) => value.id == message.id).deliveryStatus,
+      MessageDeliveryStatus.stored,
+    );
   });
 
-  test('legacy ACK does not mark stored before OpenQSP STORED', () async {
+  test('legacy APRS ACK cannot replace Q2 STORED', () async {
     expect(session.supportsAprsCommitAck, isFalse);
 
     final message = await transport.send(
       callsign: 'EA3GNU',
       remoteCallsign: 'EA3ABC',
-      text: 'legacy send',
+      text: 'q2 send',
       token: '',
     );
     await Future<void>.delayed(Duration.zero);
 
-    _injectAck(service, messageId: '00');
+    _injectAck(service, messageId: 'C00');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
@@ -160,7 +151,7 @@ void main() {
       MessageDeliveryStatus.processing,
     );
 
-    _injectObject(service, const OpenQspStored(), transactionId: 'STO');
+    _injectObject(service, const OpenQspStored(), transactionId: '014');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
@@ -171,21 +162,12 @@ void main() {
     );
   });
 
-  test('late APRS commit ACK proves stored even after timeout', () async {
-    _injectObject(
-      service,
-      const OpenQspCapabilities(protocolVersion: 1, capabilities: 0x1f),
-      transactionId: 'CAP',
-    );
-    await Future<void>.delayed(Duration.zero);
-    await Future<void>.delayed(Duration.zero);
-    expect(session.supportsAprsCommitAck, isTrue);
-
+  test('late Q2 STORED recovers a send already shown as retry', () async {
     final fastTransport = AprsMessagesTransport(
       session: session,
       callsign: 'EA3GNU',
       responseTimeout: const Duration(milliseconds: 50),
-      transactionIdFactory: () => 'XYZ',
+      transactionIdFactory: () => '015',
     );
     await fastTransport.connect(callsign: 'EA3GNU', token: '');
     addTearDown(fastTransport.close);
@@ -200,7 +182,7 @@ void main() {
     final message = await fastTransport.send(
       callsign: 'EA3GNU',
       remoteCallsign: 'EA3ABC',
-      text: 'late ack',
+      text: 'late stored',
       token: '',
     );
     expect(message.deliveryStatus, MessageDeliveryStatus.processing);
@@ -208,7 +190,7 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 80));
     expect(statuses, contains(MessageDeliveryStatus.retry));
 
-    _injectAck(service, messageId: 'C00');
+    _injectObject(service, const OpenQspStored(), transactionId: '015');
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
     expect(statuses.last, MessageDeliveryStatus.stored);
@@ -363,7 +345,7 @@ void main() {
     await expectLater(pending, throwsA(isA<TimeoutException>()));
   });
 
-  test('sync inactivity timeout is refreshed by incoming Q1 traffic', () async {
+  test('sync inactivity timeout is refreshed by incoming Q2 traffic', () async {
     final slowTransport = AprsMessagesTransport(
       session: session,
       callsign: 'EA3GNU',
@@ -491,12 +473,10 @@ void _injectObject(
   final core = codec.encode(object, unsolicited: unsolicited);
   final fragments = fragmentFrame(core, transactionId);
 
-  for (var index = 0; index < fragments.length; index++) {
-    final fragment = fragments[index];
+  for (final fragment in fragments) {
     final information = messageEncoder.encode(
       addressee: 'EA3GNU',
       body: fragment.body,
-      messageId: index.toRadixString(36).toUpperCase().padLeft(2, '0'),
     );
     final ax25 = ax25Encoder.encodeUi(
       destination: const Ax25Address(
