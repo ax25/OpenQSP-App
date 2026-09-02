@@ -292,11 +292,14 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 
     if (_completedReceived.containsKey(key)) {
       _debugBurst(fragment.transactionId, duplicate: true);
-      if (!_completedAckTimers.containsKey(key)) {
-        unawaited(
-          _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
-        );
-      }
+      // Any fragment received after completion means the sender may still be
+      // retransmitting because our previous ACK was lost. Reply immediately
+      // with another ACK so the remote side can stop, even if the original
+      // delayed completion ACK has not fired yet.
+      _completedAckTimers.remove(key)?.cancel();
+      unawaited(
+        _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
+      );
       // Keep the duplicate out of the burst state machine, but let the raw
       // APRS frame continue downstream so the traffic monitor can show the
       // exact IGate/APRS/RF path that caused this recovery ACK. The upper
@@ -326,6 +329,11 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       _receivedBursts.remove(key);
       _completedReceived[key] = now;
       _debugBurst(fragment.transactionId, duplicate: false);
+      // Once one server response has completed, any older partial receive
+      // transaction is stale. Cancel and discard all NACK state so a previous
+      // transaction cannot keep requesting fragments after the message has
+      // already been delivered.
+      _cancelAllReceiveRepairState();
       _completedAckTimers[key]?.cancel();
       _completedAckTimers[key] = Timer(finalFragmentRepairDelay, () {
         _completedAckTimers.remove(key);
@@ -439,14 +447,18 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     _sentBursts.clear();
   }
 
-  void _clearReceiveState() {
+  void _cancelAllReceiveRepairState() {
     for (final burst in _receivedBursts.values) {
       burst.timer?.cancel();
     }
+    _receivedBursts.clear();
+  }
+
+  void _clearReceiveState() {
+    _cancelAllReceiveRepairState();
     for (final timer in _completedAckTimers.values) {
       timer.cancel();
     }
-    _receivedBursts.clear();
     _completedReceived.clear();
     _completedAckTimers.clear();
   }
