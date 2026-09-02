@@ -232,8 +232,11 @@ final class AprsParser {
           ),
         ) ??
         _invalidThirdParty(outerFrame, 'invalid third-party payload');
-    if (packet is! AprsInvalid && packet.igate case final igate?) {
-      AprsIgateRegistry.instance.observe(igate.toString());
+    if (packet is! AprsInvalid) {
+      final igate = packet.igate;
+      if (igate != null) {
+        AprsIgateRegistry.instance.observe(igate.toString());
+      }
     }
     return packet;
   }
