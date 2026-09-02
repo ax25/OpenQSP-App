@@ -147,6 +147,33 @@ void main() {
     expect(delegate.sent, isEmpty, reason: 'S2 itself does not require A2');
     await subscription.cancel();
   });
+
+  test('third-party S2 keeps OQSP as logical source downstream', () async {
+    final delegate = _FakeBluetoothTncService();
+    final link = BurstRepairBluetoothTncService(delegate);
+    final forwarded = <List<int>>[];
+    final subscription = link.incomingBytes.listen(forwarded.add);
+    final s2 = 'S2${encodeOpenQspBase91([165])}';
+
+    delegate.emit(
+      _kissThirdPartyMessage(
+        igate: 'EA3IK-1',
+        source: openQspAprsAddressee,
+        addressee: 'EA3GNU',
+        body: s2,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(forwarded, hasLength(1));
+    final packet = _packet(forwarded.single);
+    expect(packet.frame.source.toString(), openQspAprsAddressee);
+    expect(packet.addressee, 'EA3GNU');
+    final fragment = parseFragment(packet.text);
+    expect(fragment.transactionId, '04L');
+    expect(fragment.rawData, Uint8List.fromList([1, 0x44, 0, 0]));
+    await subscription.cancel();
+  });
 }
 
 OpenQspAprsFragment _q2(String tx, int index, int total, List<int> raw) =>
@@ -192,7 +219,38 @@ List<int> _kissMessage({
   );
 }
 
-String _body(List<int> kiss) {
+List<int> _kissThirdPartyMessage({
+  required String igate,
+  required String source,
+  required String addressee,
+  required String body,
+}) {
+  final igateParts = igate.split('-');
+  final igateSsid = igateParts.length == 2 ? int.parse(igateParts[1]) : 0;
+  final paddedAddressee = addressee.padRight(9);
+  final information =
+      '}$source>APOQSP,TCPIP*,qAC,$igate::$paddedAddressee:$body'.codeUnits;
+  final ax25 = const Ax25Encoder().encodeUi(
+    destination: const Ax25Address(
+      callsign: 'APRS',
+      ssid: 0,
+      hasBeenRepeated: false,
+      isLast: false,
+    ),
+    source: Ax25Address(
+      callsign: igateParts.first,
+      ssid: igateSsid,
+      hasBeenRepeated: false,
+      isLast: true,
+    ),
+    information: information,
+  );
+  return const KissEncoder().encode(
+    KissFrame(port: 0, command: 0, payload: ax25),
+  );
+}
+
+AprsTextMessage _packet(List<int> kiss) {
   final decoder = KissDecoder();
   KissFrame? frame;
   final subscription = decoder.frames.listen((value) => frame = value);
@@ -200,9 +258,10 @@ String _body(List<int> kiss) {
   unawaited(subscription.cancel());
   unawaited(decoder.close());
   final ax25 = const Ax25Decoder().decode(frame!.payload);
-  final packet = const AprsParser().parse(ax25)! as AprsTextMessage;
-  return packet.text;
+  return const AprsParser().parse(ax25)! as AprsTextMessage;
 }
+
+String _body(List<int> kiss) => _packet(kiss).text;
 
 final class _FakeBluetoothTncService implements BluetoothTncService {
   final StreamController<List<int>> _incoming =
