@@ -321,7 +321,17 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       source: source,
       information: information,
     );
-    _debugTx('TX $localIdentity -> $openQspAprsAddressee | OPENQSP | $body');
+    final storedTransaction = parseOpenQspStoredControl(body);
+    final control = parseOpenQspBurstControl(body);
+    final detail = storedTransaction != null
+        ? 'STORED | txn=$storedTransaction'
+        : switch (control) {
+            OpenQspBurstAck(:final transactionId) => 'ACK | txn=$transactionId',
+            OpenQspBurstMissing(:final transactionId, :final missing) =>
+              'NACK | txn=$transactionId | missing=${missing.map((index) => index + 1).join(',')}',
+            null => body,
+          };
+    _debugTx('TX $localIdentity -> $openQspAprsAddressee | OPENQSP | $detail');
     await delegate.sendBytes(
       _kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
     );
