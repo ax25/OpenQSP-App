@@ -156,7 +156,7 @@ void main() {
     await subscription.cancel();
   });
 
-  test('duplicate completed Q2 remains visible and emits recovery A2', () async {
+  test('duplicate completed Q2 stays below app RX and emits recovery A2', () async {
     final delegate = _FakeBluetoothTncService();
     final link = BurstRepairBluetoothTncService(
       delegate,
@@ -178,8 +178,11 @@ void main() {
     delegate.emit(packet);
     await Future<void>.delayed(Duration.zero);
 
-    expect(forwarded, hasLength(2));
-    expect(forwarded.last, packet);
+    expect(
+      forwarded,
+      hasLength(1),
+      reason: 'ACKed duplicates must not re-arm application receive state',
+    );
     expect(delegate.sent, hasLength(2));
     final recoveryAck = parseOpenQspBurstControl(_body(delegate.sent.last));
     expect(recoveryAck, isA<OpenQspBurstAck>());
