@@ -134,6 +134,11 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
         final ax25 = _ax25Decoder.decode(frame.payload);
         final aprs = _aprsParser.parse(ax25);
         if (aprs is AprsTextMessage && _isFromOpenQsp(aprs)) {
+          final storedTransaction = parseOpenQspStoredControl(aprs.text);
+          if (storedTransaction != null) {
+            _forwardCompactStored(ax25, aprs, storedTransaction);
+            return;
+          }
           final control = parseOpenQspBurstControl(aprs.text);
           if (control != null) {
             _handleControl(control);
@@ -149,6 +154,32 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       }
     }
     _incoming.add(_kissEncoder.encode(frame));
+  }
+
+  void _forwardCompactStored(
+    dynamic ax25,
+    AprsTextMessage message,
+    String transactionId,
+  ) {
+    final transaction = decodeBase36(transactionId, 3);
+    // Core STORED is the complete frame 01 44 00 00. Build a one-fragment Q2
+    // envelope for downstream consumers. This synthetic frame never goes on RF.
+    final syntheticBody =
+        'Q2${encodeOpenQspBase91([transaction, 0x00, 0x01, 0x44, 0x00, 0x00])}';
+    final information = _messageEncoder.encode(
+      addressee: message.addressee,
+      body: syntheticBody,
+    );
+    final syntheticAx25 = _ax25Encoder.encodeUi(
+      destination: ax25.destination,
+      source: ax25.source,
+      information: information,
+    );
+    _incoming.add(
+      _kissEncoder.encode(
+        KissFrame(port: 0, command: 0, payload: syntheticAx25),
+      ),
+    );
   }
 
   static bool _isFromOpenQsp(AprsTextMessage message) =>
@@ -194,8 +225,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     }
   }
 
-  /// Returns true when the fragment belongs to a transaction already completed
-  /// by this link and therefore must not be forwarded to the Core reassembler.
   bool _observeIncomingFragment(AprsTextMessage message) {
     final now = DateTime.now().toUtc();
     _expireCaches(now);
@@ -365,6 +394,17 @@ final class OpenQspBurstMissing extends OpenQspBurstControl {
   final Set<int> missing;
 }
 
+String? parseOpenQspStoredControl(String body) {
+  if (!body.startsWith('S2')) return null;
+  try {
+    final payload = decodeOpenQspBase91(body.substring(2));
+    if (payload.length != 1) return null;
+    return encodeBase36(payload[0], 3);
+  } on Object {
+    return null;
+  }
+}
+
 OpenQspBurstControl? parseOpenQspBurstControl(String body) {
   if (body.startsWith('A2')) {
     try {
@@ -390,7 +430,6 @@ OpenQspBurstControl? parseOpenQspBurstControl(String body) {
     }
   }
 
-  // Migration compatibility with Q1 controls.
   final ack = RegExp(r'^Q1A:([0-9A-Z]{3})$').firstMatch(body);
   if (ack != null) return OpenQspBurstAck(ack.group(1)!);
   final nack = RegExp(r'^Q1N:([0-9A-Z]{3}):([0-9A-F]{4})$').firstMatch(body);
