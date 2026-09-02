@@ -182,6 +182,15 @@ final class AprsSessionController extends ChangeNotifier {
 
   void _observeFragmentActivity() {
     if (!_active) return;
+    // RF digipeaters can deliver additional copies of fragments after a full
+    // message has already completed. Those duplicates increment the fragment
+    // counter but do not produce another OpenQSP frame, so treating them as a
+    // fresh receive would eventually turn a successful receive into `failed`.
+    // Keep the completed result stable until its normal visibility timer hides
+    // it. A genuinely new complete message will still be handled below via
+    // [_completeMessageReceive].
+    if (_messageReceiveState == AprsMessageReceiveState.completed) return;
+
     _receiveCompletedTimer?.cancel();
     _receiveCompletedTimer = null;
     _messageReceiveState = AprsMessageReceiveState.receiving;
@@ -344,10 +353,6 @@ final class AprsSessionController extends ChangeNotifier {
       return;
     }
     if (current == AprsSessionState.notResponding) {
-      // A complete, valid OpenQSP frame proves the server is reachable even if
-      // the original capability check timed out. The request that produced
-      // this frame may have been delayed in the APRS/IGate path, so recover as
-      // slow rather than discarding the late response.
       _responseHealthOverride = AprsSessionState.slow;
     }
   }
