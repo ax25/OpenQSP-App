@@ -160,6 +160,7 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                   child: DropdownButton<AprsPathMode>(
                     key: const Key('aprsPath'),
                     isExpanded: true,
+                    isDense: true,
                     value: _aprsPathMode,
                     onChanged: !_aprsPathLoaded
                         ? null
@@ -186,6 +187,7 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                   child: DropdownButton<String>(
                     key: const Key('forcedIgate'),
                     isExpanded: true,
+                    isDense: true,
                     value: igateRegistry.forcedIgate ?? '',
                     onChanged: (value) {
                       if (value == null) return;
