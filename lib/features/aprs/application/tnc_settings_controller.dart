@@ -356,7 +356,7 @@ class TncSettingsController extends ChangeNotifier {
       '/' || '@' => info.length > 8
           ? _humanizePosition(info.substring(8))
           : _singleLine(info),
-      '_' => 'weather: ${_singleLine(info.substring(1))}',
+      '_' => _humanizeWeather(info.substring(1)),
       '>' => 'status: ${_singleLine(info.substring(1))}',
       'T' => 'telemetry: ${_singleLine(info.substring(1))}',
       ';' => 'object: ${_singleLine(info.substring(1))}',
@@ -458,6 +458,8 @@ class TncSettingsController extends ChangeNotifier {
     if (digipeaters.isNotEmpty) {
       return 'RF VIA ${digipeaters.map((address) => address.pathText).join(',')}';
     }
+    // No APRS third-party wrapper and no AX.25 digipeater path means only that
+    // this frame arrived from the attached TNC. It does not prove RF directness.
     return 'RF';
   }
 
