@@ -868,8 +868,6 @@ class _CapabilityTile extends StatelessWidget {
             if (badgeCount > 0) ...[
               Badge(
                 key: Key('unreadBadge-$title'),
-                backgroundColor: Colors.red,
-                textColor: Colors.white,
                 label: Text('$badgeCount'),
               ),
               const SizedBox(width: 8),
