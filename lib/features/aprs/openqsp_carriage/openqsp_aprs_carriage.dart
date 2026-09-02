@@ -245,9 +245,6 @@ final class OpenQspAprsFragment {
   }
 }
 
-/// Default outbound fragmentation: compact APRS V2. Older callers may still
-/// provide a three-character transaction from the Q1 space; map it to the Q2
-/// 8-bit wire space at the carriage boundary.
 List<OpenQspAprsFragment> fragmentFrame(
   Uint8List frame,
   String transactionId,
@@ -256,7 +253,6 @@ List<OpenQspAprsFragment> fragmentFrame(
   return fragmentFrameV2(frame, encodeBase36(legacyValue & 0xff, 3));
 }
 
-/// Legacy Q1 fragmentation retained for compatibility tests/migration tools.
 List<OpenQspAprsFragment> fragmentFrameV1(
   Uint8List frame,
   String transactionId,
@@ -387,7 +383,7 @@ final class OpenQspAprsReassembler {
 
   final Duration ttl;
   final int maxEntries;
-  final Map<_AssemblyKey, _Assembly> _assemblies = {};
+  final Map<String, _Assembly> _assemblies = {};
 
   Uint8List? add({
     required String peer,
@@ -395,7 +391,7 @@ final class OpenQspAprsReassembler {
     required DateTime now,
   }) {
     _discardExpired(now);
-    final key = _AssemblyKey(peer, fragment.transactionId);
+    final key = '${peer}|${fragment.transactionId}';
     var assembly = _assemblies[key];
     if (assembly == null) {
       if (_assemblies.length >= maxEntries) {
@@ -461,19 +457,101 @@ final class OpenQspAprsReassembler {
   }
 }
 
-final class _AssemblyKey {
-  const _AssemblyKey(this.peer, this.transactionId);
-  final String peer;
+sealed class OpenQspBurstControl {
+  const OpenQspBurstControl(this.transactionId);
   final String transactionId;
+}
 
-  @override
-  bool operator ==(Object other) =>
-      other is _AssemblyKey &&
-      peer == other.peer &&
-      transactionId == other.transactionId;
+final class OpenQspBurstAck extends OpenQspBurstControl {
+  const OpenQspBurstAck(super.transactionId);
+}
 
-  @override
-  int get hashCode => Object.hash(peer, transactionId);
+final class OpenQspBurstMissing extends OpenQspBurstControl {
+  const OpenQspBurstMissing(super.transactionId, this.missing);
+  final Set<int> missing;
+}
+
+String? parseOpenQspStoredControl(String body) {
+  if (!body.startsWith('S2')) return null;
+  try {
+    final payload = decodeOpenQspBase91(body.substring(2));
+    if (payload.length != 1) return null;
+    return encodeBase36(payload[0], 3);
+  } on Object {
+    return null;
+  }
+}
+
+OpenQspBurstControl? parseOpenQspBurstControl(String body) {
+  if (body.startsWith('A2')) {
+    try {
+      final payload = decodeOpenQspBase91(body.substring(2));
+      if (payload.length != 1) return null;
+      return OpenQspBurstAck(encodeBase36(payload[0], 3));
+    } on Object {
+      return null;
+    }
+  }
+  if (body.startsWith('N2')) {
+    try {
+      final payload = decodeOpenQspBase91(body.substring(2));
+      if (payload.length != 3) return null;
+      final mask = (payload[1] << 8) | payload[2];
+      if (mask == 0) return null;
+      return OpenQspBurstMissing(encodeBase36(payload[0], 3), {
+        for (var index = 0; index < 16; index++)
+          if ((mask & (1 << index)) != 0) index,
+      });
+    } on Object {
+      return null;
+    }
+  }
+
+  final ack = RegExp(r'^Q1A:([0-9A-Z]{3})$').firstMatch(body);
+  if (ack != null) return OpenQspBurstAck(ack.group(1)!);
+  final nack = RegExp(r'^Q1N:([0-9A-Z]{3}):([0-9A-F]{4})$').firstMatch(body);
+  if (nack == null) return null;
+  final mask = int.parse(nack.group(2)!, radix: 16);
+  if (mask == 0) return null;
+  return OpenQspBurstMissing(nack.group(1)!, {
+    for (var index = 0; index < 16; index++)
+      if ((mask & (1 << index)) != 0) index,
+  });
+}
+
+String encodeOpenQspBurstAck(String transactionId) {
+  final transaction = _validateQ2TransactionId(transactionId);
+  return 'A2${encodeOpenQspBase91([transaction])}';
+}
+
+String encodeOpenQspBurstMissing(String transactionId, Set<int> missing) {
+  final transaction = _validateQ2TransactionId(transactionId);
+  var mask = 0;
+  for (final index in missing) {
+    if (index < 0 || index >= openQspAprsMaxFragments) {
+      throw ArgumentError.value(index, 'missing', 'fragment index out of range');
+    }
+    mask |= 1 << index;
+  }
+  if (mask == 0) {
+    throw ArgumentError.value(missing, 'missing', 'must not be empty');
+  }
+  return 'N2${encodeOpenQspBase91([transaction, mask >> 8, mask & 0xff])}';
+}
+
+int _validateQ2TransactionId(String value) {
+  if (!RegExp(r'^[0-9A-Z]{3}$').hasMatch(value)) {
+    throw ArgumentError.value(
+      value,
+      'transactionId',
+      'must be 3 uppercase base36 characters',
+    );
+  }
+  final decoded = decodeBase36(value, 3);
+  if (decoded > 0xff) {
+    throw ArgumentError.value(value, 'transactionId', 'must fit in 8 bits for Q2');
+  }
+  return decoded;
 }
 
 final class _Assembly {

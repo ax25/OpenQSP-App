@@ -59,14 +59,17 @@ class FakeAuthClient implements AuthClient {
     validations++;
     return validationResult;
   }
+
   @override
   void close() {}
 }
 
 class FakeAuthTokenStore implements AuthTokenStore {
   final Map<String, String> tokens = {};
+
   @override
   Future<String?> read(String callsign) async => tokens[callsign];
+
   @override
   Future<void> write(String callsign, String token) async {
     tokens[callsign] = token;
@@ -163,9 +166,7 @@ void main() {
 
   testWidgets('Home initially shows checking state', (tester) async {
     final pending = Completer<bool>();
-    final client = FakeServerStatusClient(
-      pending: pending.future,
-    );
+    final client = FakeServerStatusClient(pending: pending.future);
     await pumpApp(
       tester,
       FakeCallsignStore('EA3GNU'),
@@ -281,30 +282,51 @@ void main() {
     },
   );
 
-  testWidgets(
-    'valid scoped token skips prompt, while invalid token is cleared',
-    (tester) async {
-      final auth = FakeAuthClient();
-      final tokens = FakeAuthTokenStore()..tokens['EA3GNU'] = 'stored';
-      await pumpApp(
-        tester,
-        FakeCallsignStore('EA3GNU'),
-        authClient: auth,
-        tokenStore: tokens,
-      );
-      await tester.tap(find.byKey(const Key('messagesTile')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('serverPasswordField')), findsNothing);
-      expect(find.text('No conversations yet'), findsOneWidget);
-      await tester.pageBack();
-      await tester.pumpAndSettle();
-      auth.validationResult = AuthValidationResult.invalid;
-      await tester.tap(find.byKey(const Key('messagesTile')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const Key('serverPasswordField')), findsOneWidget);
-      expect(tokens.tokens['EA3GNU'], isNull);
-    },
-  );
+  testWidgets('active scoped token is reused without revalidation', (tester) async {
+    final auth = FakeAuthClient();
+    final tokens = FakeAuthTokenStore()..tokens['EA3GNU'] = 'stored';
+    await pumpApp(
+      tester,
+      FakeCallsignStore('EA3GNU'),
+      authClient: auth,
+      tokenStore: tokens,
+    );
+
+    expect(auth.validations, 1);
+    await tester.tap(find.byKey(const Key('messagesTile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('serverPasswordField')), findsNothing);
+    expect(find.text('No conversations yet'), findsOneWidget);
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+
+    auth.validationResult = AuthValidationResult.invalid;
+    await tester.tap(find.byKey(const Key('messagesTile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('serverPasswordField')), findsNothing);
+    expect(find.text('No conversations yet'), findsOneWidget);
+    expect(auth.validations, 1);
+    expect(tokens.tokens['EA3GNU'], 'stored');
+  });
+
+  testWidgets('invalid stored token is cleared during initial validation', (
+    tester,
+  ) async {
+    final auth = FakeAuthClient()
+      ..validationResult = AuthValidationResult.invalid;
+    final tokens = FakeAuthTokenStore()..tokens['EA3GNU'] = 'stored';
+    await pumpApp(
+      tester,
+      FakeCallsignStore('EA3GNU'),
+      authClient: auth,
+      tokenStore: tokens,
+    );
+
+    await tester.tap(find.byKey(const Key('messagesTile')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('serverPasswordField')), findsOneWidget);
+    expect(tokens.tokens['EA3GNU'], isNull);
+  });
 
   testWidgets('unavailable server does not prompt for password', (tester) async {
     await pumpApp(
@@ -412,10 +434,13 @@ class FakeMessagesRealtime implements MessagesRealtimeClient {
   @override
   Stream<RealtimeConnectionState> get connectionStates =>
       Stream.value(RealtimeConnectionState.connected);
+
   @override
   Stream<MessagingEvent> get events => const Stream.empty();
+
   @override
   Future<void> connect({required String callsign, required String token}) async {}
+
   @override
   Future<void> close() async {}
 }

@@ -20,6 +20,11 @@ class AuthSession {
       _activeCallsign == _normalize(callsign) ? _activeToken : null;
 
   Future<AuthGateResult> authenticateStoredToken(String callsign) async {
+    final activeToken = tokenFor(callsign);
+    if (activeToken != null && activeToken.isNotEmpty) {
+      return AuthGateResult.connected;
+    }
+
     final token = await tokenStore.read(callsign);
     if (token == null || token.isEmpty) return AuthGateResult.needsPassword;
     final validation = await client.validateToken(

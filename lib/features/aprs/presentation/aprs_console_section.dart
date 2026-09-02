@@ -53,7 +53,6 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
   @override
   Widget build(BuildContext context) {
     final entries = widget.controller.aprsConsoleEntries;
-    final colors = Theme.of(context).colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -78,13 +77,18 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
           key: const Key('aprsConsole'),
           height: 420,
           decoration: BoxDecoration(
-            color: colors.surfaceContainerLowest,
-            border: Border.all(color: colors.outlineVariant),
+            color: Colors.black,
+            border: Border.all(color: Colors.grey.shade800),
             borderRadius: BorderRadius.circular(8),
           ),
           clipBehavior: Clip.antiAlias,
           child: entries.isEmpty
-              ? const Center(child: Text('Sin tráfico APRS todavía'))
+              ? const Center(
+                  child: Text(
+                    'Sin tráfico APRS todavía',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                )
               : Scrollbar(
                   controller: _scrollController,
                   child: ListView.builder(
@@ -96,6 +100,7 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
                     itemCount: entries.length,
                     itemBuilder: (context, index) {
                       final entry = entries[index];
+                      final appearance = _appearance(entry);
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 2),
                         child: Text(
@@ -106,7 +111,10 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
                             fontFamilyFallback: const ['Courier'],
                             fontSize: 11,
                             height: 1.25,
-                            color: _entryColor(context, entry.direction),
+                            color: appearance.color,
+                            fontWeight: appearance.bold
+                                ? FontWeight.bold
+                                : FontWeight.normal,
                           ),
                         ),
                       );
@@ -118,14 +126,34 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
     );
   }
 
-  static Color _entryColor(
-    BuildContext context,
-    AprsConsoleDirection direction,
-  ) => switch (direction) {
-    AprsConsoleDirection.tx => Colors.red.shade700,
-    AprsConsoleDirection.rx => Colors.green.shade700,
-    AprsConsoleDirection.other => Colors.blue.shade700,
-  };
+  _AprsConsoleAppearance _appearance(AprsConsoleEntry entry) {
+    if (entry.direction == AprsConsoleDirection.tx) {
+      return const _AprsConsoleAppearance(
+        color: Colors.red,
+        bold: true,
+      );
+    }
+
+    final sourceCallsign = widget.controller.sourceCallsign?.trim().toUpperCase();
+    final localIdentity = sourceCallsign == null || sourceCallsign.isEmpty
+        ? null
+        : widget.controller.aprsSsid == 0
+        ? sourceCallsign
+        : '$sourceCallsign-${widget.controller.aprsSsid}';
+    final destination = entry.destination.trim().toUpperCase();
+
+    if (localIdentity != null && destination == localIdentity) {
+      return const _AprsConsoleAppearance(
+        color: Colors.green,
+        bold: true,
+      );
+    }
+
+    return const _AprsConsoleAppearance(
+      color: Colors.blue,
+      bold: false,
+    );
+  }
 
   static String _format(AprsConsoleEntry entry) {
     String two(int value) => value.toString().padLeft(2, '0');
@@ -141,4 +169,11 @@ class _AprsConsoleSectionState extends State<AprsConsoleSection> {
     return '$timestamp $direction ${entry.source} -> ${entry.destination} | '
         '${entry.via} | ${entry.type} | ${entry.content}';
   }
+}
+
+final class _AprsConsoleAppearance {
+  const _AprsConsoleAppearance({required this.color, required this.bold});
+
+  final Color color;
+  final bool bold;
 }

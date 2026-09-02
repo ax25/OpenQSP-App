@@ -194,13 +194,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _messagesController = controller;
     _messagesViaAprs = false;
     controller.addListener(_messagesChanged);
-    await controller.start();
-    if (!mounted || _aprsActive) {
-      if (identical(_messagesController, controller)) {
-        _disposeMessagesController();
-      }
-      return null;
-    }
+    unawaited(controller.start());
     return controller;
   }
 
@@ -225,13 +219,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _messagesController = controller;
     _messagesViaAprs = true;
     controller.addListener(_messagesChanged);
-    await controller.start();
-    if (!mounted || !session.active) {
-      if (identical(_messagesController, controller)) {
-        _disposeMessagesController();
-      }
-      return null;
-    }
+    unawaited(controller.start());
     return controller;
   }
 
@@ -247,8 +235,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _openMessages(controller, aprsSession: session);
       return;
     }
-    if (_serverState == ServerConnectionState.unavailable ||
-        _serverState == ServerConnectionState.checking) {
+
+    final activeToken = widget.authSession.tokenFor(widget.callsign);
+    if (activeToken != null) {
+      final controller = await _ensureInternetMessagesController();
+      if (!mounted || controller == null) return;
+      _openMessages(controller);
+      return;
+    }
+
+    if (_serverState == ServerConnectionState.checking) {
+      await _checkServer();
+      if (!mounted || _aprsActive) return;
+    }
+    if (_serverState == ServerConnectionState.unavailable) {
       _showMessage('Server unavailable');
       return;
     }

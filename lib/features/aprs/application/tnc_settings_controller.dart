@@ -453,14 +453,25 @@ class TncSettingsController extends ChangeNotifier {
 
   String _trafficVia(AprsPacket packet, {required bool transmitted}) {
     if (transmitted) return 'RF TX';
-    if (packet.igate case final igate?) return 'IGATE $igate';
-    final digipeaters = packet.frame.digipeaters;
-    if (digipeaters.isNotEmpty) {
-      return 'RF VIA ${digipeaters.map((address) => address.pathText).join(',')}';
+
+    final parts = <String>[];
+    if (packet.igate case final igate?) {
+      parts.add('IGATE $igate');
     }
-    // No APRS third-party wrapper and no AX.25 digipeater path means only that
-    // this frame arrived from the attached TNC. It does not prove RF directness.
-    return 'RF';
+    if (packet.thirdPartyRoute.isNotEmpty) {
+      parts.add('APRS VIA ${packet.thirdPartyRoute.join(',')}');
+    }
+
+    final rfPath = packet.rfPath.isNotEmpty
+        ? packet.rfPath
+        : packet.frame.digipeaters.map((address) => address.pathText).toList();
+    if (rfPath.isNotEmpty) {
+      parts.add('RF VIA ${rfPath.join(',')}');
+    }
+
+    // A missing AX.25 path only means no repeated-via addresses were present
+    // in the frame received by the TNC. Do not infer RF-direct reception.
+    return parts.isEmpty ? 'RF' : parts.join(' | ');
   }
 
   void _addConsoleEntry(AprsConsoleEntry entry) {
