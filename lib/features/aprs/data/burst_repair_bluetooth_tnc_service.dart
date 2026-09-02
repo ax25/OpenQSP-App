@@ -23,6 +23,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     this.repairDelay = const Duration(seconds: 5),
     this.finalFragmentRepairDelay = const Duration(seconds: 2),
     this.repairRetryInterval = const Duration(seconds: 15),
+    this.duplicateAckMinInterval = const Duration(seconds: 15),
     this.silentRetryTtl = const Duration(seconds: 65),
     this.cacheTtl = openQspAprsDefaultTtl,
     this.completedCacheTtl = const Duration(minutes: 10),
@@ -30,12 +31,14 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     if (repairDelay <= Duration.zero ||
         finalFragmentRepairDelay <= Duration.zero ||
         repairRetryInterval <= Duration.zero ||
+        duplicateAckMinInterval <= Duration.zero ||
         silentRetryTtl <= Duration.zero ||
         cacheTtl <= Duration.zero ||
         completedCacheTtl <= Duration.zero) {
       throw ArgumentError(
         'repairDelay, finalFragmentRepairDelay, repairRetryInterval, '
-        'silentRetryTtl, cacheTtl and completedCacheTtl must be positive',
+        'duplicateAckMinInterval, silentRetryTtl, cacheTtl and '
+        'completedCacheTtl must be positive',
       );
     }
     _incomingFrameSubscription = _incomingDecoder.frames.listen(_onIncomingFrame);
@@ -46,6 +49,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   final Duration repairDelay;
   final Duration finalFragmentRepairDelay;
   final Duration repairRetryInterval;
+  final Duration duplicateAckMinInterval;
   final Duration silentRetryTtl;
   final Duration cacheTtl;
   final Duration completedCacheTtl;
@@ -68,6 +72,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   final Map<String, _ReceivedBurst> _receivedBursts = {};
   final Map<String, DateTime> _completedReceived = {};
   final Map<String, Timer> _completedAckTimers = {};
+  final Map<String, DateTime> _completedAckSentAt = {};
 
   @override
   Stream<List<int>> get incomingBytes => _incoming.stream;
@@ -282,13 +287,29 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 
     if (_completedReceived.containsKey(key)) {
       _debugBurst(fragment.transactionId, duplicate: true);
-      _completedAckTimers.remove(key)?.cancel();
-      unawaited(
-        _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
-      );
-      // This transaction has already completed and has already been ACKed (or
-      // has an ACK in flight). Keep later RF/IGate copies below the application
-      // receive pipeline so they cannot re-arm the "receiving message" UI.
+
+      // Duplicated RF copies are common when WIDE digipeating is enabled.
+      // Never replace an already pending initial ACK, and once an ACK has been
+      // sent, rate-limit recovery ACKs so one RF duplicate cannot amplify into
+      // another transmission. A later duplicate can still recover a genuinely
+      // lost ACK after the sender's retry cadence has had time to elapse.
+      if (!_completedAckTimers.containsKey(key)) {
+        final lastAck = _completedAckSentAt[key];
+        if (lastAck == null ||
+            now.difference(lastAck) >= duplicateAckMinInterval) {
+          _completedAckSentAt[key] = now;
+          unawaited(
+            _sendControl(
+              localIdentity,
+              encodeOpenQspBurstAck(fragment.transactionId),
+            ),
+          );
+        }
+      }
+
+      // This transaction has already completed. Keep later RF/IGate copies
+      // below the application receive pipeline so they cannot re-arm the
+      // "receiving message" UI.
       return true;
     }
 
@@ -317,6 +338,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       _completedAckTimers[key]?.cancel();
       _completedAckTimers[key] = Timer(finalFragmentRepairDelay, () {
         _completedAckTimers.remove(key);
+        _completedAckSentAt[key] = DateTime.now().toUtc();
         unawaited(
           _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
         );
@@ -417,6 +439,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     for (final key in expiredCompleted) {
       _completedReceived.remove(key);
       _completedAckTimers.remove(key)?.cancel();
+      _completedAckSentAt.remove(key);
     }
   }
 
@@ -441,6 +464,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     }
     _completedReceived.clear();
     _completedAckTimers.clear();
+    _completedAckSentAt.clear();
   }
 
   Ax25Address? _parseIdentity(String value) {

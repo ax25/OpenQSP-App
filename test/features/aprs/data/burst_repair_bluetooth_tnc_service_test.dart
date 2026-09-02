@@ -156,11 +156,12 @@ void main() {
     await subscription.cancel();
   });
 
-  test('duplicate completed Q2 stays below app RX and emits recovery A2', () async {
+  test('duplicate completed Q2 is ACK-rate-limited below app RX', () async {
     final delegate = _FakeBluetoothTncService();
     final link = BurstRepairBluetoothTncService(
       delegate,
       finalFragmentRepairDelay: const Duration(milliseconds: 10),
+      duplicateAckMinInterval: const Duration(milliseconds: 40),
     );
     final forwarded = <List<int>>[];
     final subscription = link.incomingBytes.listen(forwarded.add);
@@ -175,18 +176,35 @@ void main() {
     expect(forwarded, hasLength(1));
     expect(delegate.sent, hasLength(1));
 
-    delegate.emit(packet);
-    await Future<void>.delayed(Duration.zero);
+    for (var index = 0; index < 5; index++) {
+      delegate.emit(packet);
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 5));
 
     expect(
       forwarded,
       hasLength(1),
       reason: 'ACKed duplicates must not re-arm application receive state',
     );
+    expect(
+      delegate.sent,
+      hasLength(1),
+      reason: 'RF duplicates inside the cooldown must not emit extra ACKs',
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    delegate.emit(packet);
+    await Future<void>.delayed(Duration.zero);
+
     expect(delegate.sent, hasLength(2));
     final recoveryAck = parseOpenQspBurstControl(_body(delegate.sent.last));
     expect(recoveryAck, isA<OpenQspBurstAck>());
     expect((recoveryAck! as OpenQspBurstAck).transactionId, '00D');
+
+    delegate.emit(packet);
+    await Future<void>.delayed(Duration.zero);
+    expect(delegate.sent, hasLength(2));
+
     await subscription.cancel();
   });
 
