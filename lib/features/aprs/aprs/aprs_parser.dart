@@ -1,5 +1,6 @@
 import '../ax25/ax25_address.dart';
 import '../ax25/ax25_frame.dart';
+import 'aprs_igate_registry.dart';
 import 'aprs_packet.dart';
 
 final class AprsParser {
@@ -221,7 +222,7 @@ final class AprsParser {
       pid: 0xf0,
       information: information.codeUnits,
     );
-    return _parseFrame(
+    final packet = _parseFrame(
           logicalFrame,
           allowThirdParty: false,
           igate: outerFrame.source,
@@ -231,6 +232,10 @@ final class AprsParser {
           ),
         ) ??
         _invalidThirdParty(outerFrame, 'invalid third-party payload');
+    if (packet is! AprsInvalid && packet.igate case final igate?) {
+      AprsIgateRegistry.instance.observe(igate.toString());
+    }
+    return packet;
   }
 
   static AprsInvalid _invalidThirdParty(Ax25Frame frame, String reason) {
