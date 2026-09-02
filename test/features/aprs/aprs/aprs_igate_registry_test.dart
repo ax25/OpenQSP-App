@@ -33,6 +33,7 @@ void main() {
         hasBeenRepeated: false,
         isLast: true,
       ),
+      digipeaters: const [],
       control: 0x03,
       pid: 0xf0,
       information: '}OQSP>APOQSP,TCPIP*::EA3GNU  :hello'.codeUnits,
