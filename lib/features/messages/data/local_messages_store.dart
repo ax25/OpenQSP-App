@@ -69,25 +69,15 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
     final storedMessages = _decodeMessages(
       preferences.getString(_messagesKey(normalizedCallsign)),
     );
-    final sequences = <int>{};
+    var highestSequence = 0;
     for (final message in storedMessages) {
       if (_normalize(message.to) != normalizedCallsign) continue;
       final sequence = _canonicalMailboxSequence(message.id, normalizedCallsign);
-      if (sequence != null) sequences.add(sequence);
+      if (sequence != null && sequence > highestSequence) {
+        highestSequence = sequence;
+      }
     }
-    var contiguous = 0;
-    while (sequences.contains(contiguous + 1)) {
-      contiguous++;
-    }
-
-    if (storedCursor == null) {
-      return contiguous == 0 ? null : '$contiguous';
-    }
-    final persisted = int.tryParse(storedCursor);
-    if (persisted == null || persisted < 0 || persisted > 0xffffffff) {
-      return storedCursor;
-    }
-    return '${persisted > contiguous ? persisted : contiguous}';
+    return highestSequence == 0 ? null : '$highestSequence';
   }
 
   @override
