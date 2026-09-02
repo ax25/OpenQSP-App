@@ -1,18 +1,25 @@
 import '../ax25/ax25_address.dart';
 import '../ax25/ax25_frame.dart';
+import 'aprs_igate_registry.dart';
 import 'aprs_packet.dart';
 
 final class AprsParser {
   const AprsParser();
 
   /// Returns null only when [frame] is outside APRS's AX.25 UI/F0 envelope.
-  AprsPacket? parse(Ax25Frame frame) => _parseFrame(
-        frame,
-        allowThirdParty: true,
-        igate: null,
-        thirdPartyRoute: const [],
-        rfPath: const [],
-      );
+  AprsPacket? parse(Ax25Frame frame) {
+    final packet = _parseFrame(
+      frame,
+      allowThirdParty: true,
+      igate: null,
+      thirdPartyRoute: const [],
+      rfPath: const [],
+    );
+    if (packet != null && packet is! AprsInvalid) {
+      _learnUsedDigipeaters(frame);
+    }
+    return packet;
+  }
 
   AprsPacket? _parseFrame(
     Ax25Frame frame, {
@@ -231,6 +238,20 @@ final class AprsParser {
           ),
         ) ??
         _invalidThirdParty(outerFrame, 'invalid third-party payload');
+  }
+
+  void _learnUsedDigipeaters(Ax25Frame frame) {
+    for (final address in frame.digipeaters) {
+      if (!address.hasBeenRepeated || _isGenericPathAlias(address.callsign)) {
+        continue;
+      }
+      AprsIgateRegistry.instance.observe(address.toString());
+    }
+  }
+
+  static bool _isGenericPathAlias(String callsign) {
+    final value = callsign.toUpperCase();
+    return RegExp(r'^(WIDE|TRACE|TEMP)[0-9]*$').hasMatch(value);
   }
 
   static AprsInvalid _invalidThirdParty(Ax25Frame frame, String reason) {
