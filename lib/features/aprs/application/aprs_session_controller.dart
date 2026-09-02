@@ -26,11 +26,6 @@ enum AprsActivityState {
 
 enum AprsMessageReceiveState { hidden, receiving, failed, completed }
 
-/// Owns the operational APRS mode independently from any presentation screen.
-///
-/// The underlying [TncSettingsController] remains the single owner of the
-/// Bluetooth/KISS/APRS/OpenQSP pipeline. This controller only decides when that
-/// pipeline should be active for the application.
 final class AprsSessionController extends ChangeNotifier {
   AprsSessionController({
     required this.tncController,
@@ -83,8 +78,7 @@ final class AprsSessionController extends ChangeNotifier {
   AprsActivityState get activityState => _activityState;
   AprsMessageReceiveState get messageReceiveState => _messageReceiveState;
   String? get messageReceivePeer => _messageReceivePeer;
-  bool get hasMessageReceiveIndicator =>
-      _messageReceiveState != AprsMessageReceiveState.hidden;
+  bool get hasMessageReceiveIndicator => false;
   bool get showMessageReceiveIndicator =>
       _messageReceiveState != AprsMessageReceiveState.hidden &&
       (_messageReceiveState != AprsMessageReceiveState.receiving ||
@@ -94,9 +88,6 @@ final class AprsSessionController extends ChangeNotifier {
   bool get serverReachable =>
       state == AprsSessionState.available || state == AprsSessionState.slow;
   int get serverCapabilities => _serverCapabilities;
-  // Q2 has transaction-level A2/N2 reliability plus STORED/S2 for durable
-  // SEND_MESSAGE completion. The legacy APRS message-ID commit ACK must never
-  // be enabled for Q2, even if an older server advertises that capability bit.
   bool get supportsAprsCommitAck => false;
   List<OpenQspMessage> get recentMessages => List.unmodifiable(_recentMessages);
 
@@ -160,6 +151,9 @@ final class AprsSessionController extends ChangeNotifier {
   void setActivity(AprsActivityState value) {
     if (_activityState == value) return;
     _activityState = value;
+    if (value == AprsActivityState.noNewMessages) {
+      _clearReceiveState();
+    }
     _notify();
   }
 
@@ -194,13 +188,6 @@ final class AprsSessionController extends ChangeNotifier {
 
   void _observeFragmentActivity() {
     if (!_active) return;
-    // RF digipeaters can deliver additional copies of fragments after a full
-    // message has already completed. Those duplicates increment the fragment
-    // counter but do not produce another OpenQSP frame, so treating them as a
-    // fresh receive would eventually turn a successful receive into `failed`.
-    // Keep the completed result stable until its normal visibility timer hides
-    // it. A genuinely new complete message will still be handled below via
-    // [_completeMessageReceive].
     if (_messageReceiveState == AprsMessageReceiveState.completed) return;
 
     _receiveCompletedTimer?.cancel();
@@ -212,10 +199,6 @@ final class AprsSessionController extends ChangeNotifier {
       _responseHealthOverride = AprsSessionState.available;
     }
 
-    // Reception state becomes active immediately so transport/session logic can
-    // block overlapping syncs from the first fragment. Presentation is delayed
-    // separately so one-fragment control responses (CAPABILITIES, END returned=0)
-    // can finish without flashing the receive icon.
     if (_messageReceiveState != AprsMessageReceiveState.receiving) {
       _messageReceiveState = AprsMessageReceiveState.receiving;
       _receiveIndicatorVisible = false;
@@ -276,7 +259,10 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _finishNonMessageFrame() {
-    if (_messageReceiveState != AprsMessageReceiveState.receiving) return;
+    if (_messageReceiveState != AprsMessageReceiveState.receiving &&
+        _messageReceiveState != AprsMessageReceiveState.failed) {
+      return;
+    }
     _receiveIndicatorTimer?.cancel();
     _receiveIndicatorTimer = null;
     _receiveFailureTimer?.cancel();
