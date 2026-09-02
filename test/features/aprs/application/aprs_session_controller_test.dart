@@ -223,14 +223,14 @@ void main() {
     expect(session.statusLabel, 'APRS Connection Slow');
   });
 
-  test('CAPABILITIES advertises APRS commit ACK support', () async {
+  test('Q2 ignores legacy APRS commit ACK capability', () async {
     await session.activate();
     service.receiveCapabilities(commitAck: true);
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
     expect(session.serverCapabilities, 0x1f);
-    expect(session.supportsAprsCommitAck, isTrue);
+    expect(session.supportsAprsCommitAck, isFalse);
   });
 
   test('receive indicator fails after silence, hides at TTL and recovers', () async {
