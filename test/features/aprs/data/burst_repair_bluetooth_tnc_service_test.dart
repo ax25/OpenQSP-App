@@ -89,10 +89,10 @@ void main() {
     );
     await Future<void>.delayed(const Duration(milliseconds: 20));
 
-    final control = parseOpenQspBurstControl(_body(delegate.sent.last));
-    expect(control, isA<OpenQspBurstMissing>());
-    expect((control! as OpenQspBurstMissing).transactionId, '006');
-    expect(control.missing, {1});
+    final parsed = parseOpenQspBurstControl(_body(delegate.sent.last))!
+        as OpenQspBurstMissing;
+    expect(parsed.transactionId, '006');
+    expect(parsed.missing, {1});
     await subscription.cancel();
   });
 
