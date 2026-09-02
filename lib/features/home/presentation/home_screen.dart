@@ -265,6 +265,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _showMessage('Server unavailable');
         return;
       case AuthGateResult.needsPassword:
+        _disposeMessagesController();
         await _promptUntilAuthenticated();
         return;
     }
