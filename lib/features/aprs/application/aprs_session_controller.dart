@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import '../../../core/openqsp_protocol/openqsp_constants.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../domain/tnc_connection_state.dart';
@@ -86,8 +85,10 @@ final class AprsSessionController extends ChangeNotifier {
   bool get serverReachable =>
       state == AprsSessionState.available || state == AprsSessionState.slow;
   int get serverCapabilities => _serverCapabilities;
-  bool get supportsAprsCommitAck =>
-      _serverCapabilities & OpenQspCapability.aprsCommitAck != 0;
+  // Q2 has transaction-level A2/N2 reliability plus STORED/S2 for durable
+  // SEND_MESSAGE completion. The legacy APRS message-ID commit ACK must never
+  // be enabled for Q2, even if an older server advertises that capability bit.
+  bool get supportsAprsCommitAck => false;
   List<OpenQspMessage> get recentMessages => List.unmodifiable(_recentMessages);
 
   AprsSessionState get state {
