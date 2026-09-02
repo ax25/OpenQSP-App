@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:openqsp_app/features/aprs/aprs/aprs_igate_registry.dart';
 import 'package:openqsp_app/features/aprs/aprs/aprs_message_encoder.dart';
 import 'package:openqsp_app/features/aprs/aprs/aprs_packet.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
@@ -15,8 +16,16 @@ import 'package:openqsp_app/features/aprs/domain/tnc_device.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_decoder.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_encoder.dart';
 import 'package:openqsp_app/features/aprs/kiss/kiss_frame.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  final igates = AprsIgateRegistry.instance;
+
+  setUp(() async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    await igates.resetForTesting();
+  });
+
   for (final testCase in <(AprsPathMode, List<String>)>[
     (AprsPathMode.direct, const []),
     (AprsPathMode.oneHop, const ['WIDE1-1']),
@@ -39,7 +48,46 @@ void main() {
     });
   }
 
+  test('forced iGate takes precedence over configured APRS path', () async {
+    igates.observe('EA3IK-6');
+    await igates.setForced('EA3IK-6');
+    final delegate = _FakeBluetoothTncService();
+    final service = AprsPathBluetoothTncService(
+      delegate,
+      storage: _FakeAprsPathStorage(AprsPathMode.twoHops),
+    );
+
+    await service.sendBytes(_openQspKissFrame());
+
+    final ax25 = _decodeKissAx25(delegate.sent.single);
+    expect(
+      ax25.digipeaters.map((address) => address.toString()).toList(),
+      const ['EA3IK-6'],
+    );
+  });
+
+  test('selecting no forced iGate restores configured APRS path', () async {
+    igates.observe('EA3IK-6');
+    await igates.setForced('EA3IK-6');
+    await igates.setForced(null);
+    final delegate = _FakeBluetoothTncService();
+    final service = AprsPathBluetoothTncService(
+      delegate,
+      storage: _FakeAprsPathStorage(AprsPathMode.oneHop),
+    );
+
+    await service.sendBytes(_openQspKissFrame());
+
+    final ax25 = _decodeKissAx25(delegate.sent.single);
+    expect(
+      ax25.digipeaters.map((address) => address.toString()).toList(),
+      const ['WIDE1-1'],
+    );
+  });
+
   test('non-OpenQSP KISS traffic is not rewritten', () async {
+    igates.observe('EA3IK-6');
+    await igates.setForced('EA3IK-6');
     final delegate = _FakeBluetoothTncService();
     final service = AprsPathBluetoothTncService(
       delegate,
