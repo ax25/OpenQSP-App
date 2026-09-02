@@ -68,6 +68,7 @@ final class AprsSessionController extends ChangeNotifier {
   Timer? _receiveCompletedTimer;
   AprsActivityState _activityState = AprsActivityState.idle;
   AprsMessageReceiveState _messageReceiveState = AprsMessageReceiveState.hidden;
+  bool _receiveIndicatorVisible = false;
   String? _messageReceivePeer;
   int _lastObservedFramesRx = 0;
   int _lastObservedFragmentsRx = 0;
@@ -84,6 +85,10 @@ final class AprsSessionController extends ChangeNotifier {
   String? get messageReceivePeer => _messageReceivePeer;
   bool get hasMessageReceiveIndicator =>
       _messageReceiveState != AprsMessageReceiveState.hidden;
+  bool get showMessageReceiveIndicator =>
+      _messageReceiveState != AprsMessageReceiveState.hidden &&
+      (_messageReceiveState != AprsMessageReceiveState.receiving ||
+          _receiveIndicatorVisible);
   String? get lastIgate => tncController.lastOpenQspIgate;
   DateTime? get lastServerRx => tncController.lastValidOpenQspRx;
   bool get serverReachable =>
@@ -182,6 +187,7 @@ final class AprsSessionController extends ChangeNotifier {
   void _clearReceiveState() {
     _cancelReceiveTimers();
     _messageReceiveState = AprsMessageReceiveState.hidden;
+    _receiveIndicatorVisible = false;
     _messageReceivePeer = null;
     _receiveTimeoutSlow = false;
   }
@@ -206,20 +212,21 @@ final class AprsSessionController extends ChangeNotifier {
       _responseHealthOverride = AprsSessionState.available;
     }
 
-    // Do not flash the receive icon for one-fragment control responses such as
-    // CAPABILITIES or END returned=0. Give the Core decoder a short chance to
-    // finish the frame first. A real multi-fragment receive remains open long
-    // enough for this timer to make the indicator visible.
-    if (_messageReceiveState == AprsMessageReceiveState.failed) {
-      _receiveIndicatorTimer?.cancel();
-      _receiveIndicatorTimer = null;
+    // Reception state becomes active immediately so transport/session logic can
+    // block overlapping syncs from the first fragment. Presentation is delayed
+    // separately so one-fragment control responses (CAPABILITIES, END returned=0)
+    // can finish without flashing the receive icon.
+    if (_messageReceiveState != AprsMessageReceiveState.receiving) {
       _messageReceiveState = AprsMessageReceiveState.receiving;
-    } else if (_messageReceiveState == AprsMessageReceiveState.hidden &&
-        _receiveIndicatorTimer == null) {
+      _receiveIndicatorVisible = false;
+      _receiveIndicatorTimer?.cancel();
       _receiveIndicatorTimer = Timer(receiveIndicatorDelay, () {
         _receiveIndicatorTimer = null;
-        if (!_active || _disposed) return;
-        _messageReceiveState = AprsMessageReceiveState.receiving;
+        if (!_active || _disposed ||
+            _messageReceiveState != AprsMessageReceiveState.receiving) {
+          return;
+        }
+        _receiveIndicatorVisible = true;
         _notify();
       });
     }
@@ -231,6 +238,7 @@ final class AprsSessionController extends ChangeNotifier {
       _receiveIndicatorTimer?.cancel();
       _receiveIndicatorTimer = null;
       _messageReceiveState = AprsMessageReceiveState.failed;
+      _receiveIndicatorVisible = true;
       _notify();
     });
     _receiveHideTimer = Timer(receiveHideDelay, () {
@@ -238,6 +246,7 @@ final class AprsSessionController extends ChangeNotifier {
       _receiveIndicatorTimer?.cancel();
       _receiveIndicatorTimer = null;
       _messageReceiveState = AprsMessageReceiveState.hidden;
+      _receiveIndicatorVisible = false;
       _messageReceivePeer = null;
       _receiveTimeoutSlow = true;
       _responseHealthOverride = AprsSessionState.slow;
@@ -254,10 +263,12 @@ final class AprsSessionController extends ChangeNotifier {
     _receiveHideTimer = null;
     _receiveCompletedTimer?.cancel();
     _messageReceiveState = AprsMessageReceiveState.completed;
+    _receiveIndicatorVisible = true;
     _messageReceivePeer = message.author;
     _receiveCompletedTimer = Timer(receiveCompletedVisibleDuration, () {
       if (_disposed) return;
       _messageReceiveState = AprsMessageReceiveState.hidden;
+      _receiveIndicatorVisible = false;
       _messageReceivePeer = null;
       _receiveCompletedTimer = null;
       _notify();
@@ -265,10 +276,7 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _finishNonMessageFrame() {
-    if (_messageReceiveState != AprsMessageReceiveState.receiving &&
-        _receiveIndicatorTimer == null) {
-      return;
-    }
+    if (_messageReceiveState != AprsMessageReceiveState.receiving) return;
     _receiveIndicatorTimer?.cancel();
     _receiveIndicatorTimer = null;
     _receiveFailureTimer?.cancel();
@@ -276,6 +284,7 @@ final class AprsSessionController extends ChangeNotifier {
     _receiveHideTimer?.cancel();
     _receiveHideTimer = null;
     _messageReceiveState = AprsMessageReceiveState.hidden;
+    _receiveIndicatorVisible = false;
     _messageReceivePeer = null;
   }
 
