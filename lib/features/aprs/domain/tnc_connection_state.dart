@@ -1,9 +1,9 @@
 enum TncConnectionState {
-  loading('Cargando'),
-  notConfigured('No configurada'),
-  configured('Configurada'),
-  connecting('Conectando'),
-  connected('Conectada'),
+  loading('Loading'),
+  notConfigured('Not configured'),
+  configured('Configured'),
+  connecting('Connecting'),
+  connected('Connected'),
   error('Error');
 
   const TncConnectionState(this.label);
@@ -11,13 +11,13 @@ enum TncConnectionState {
 }
 
 enum TncFailure {
-  unavailable('Bluetooth no está disponible'),
-  disabled('Bluetooth está desactivado'),
-  permissionDenied('Permiso Bluetooth no concedido'),
-  deviceNotFound('El dispositivo configurado ya no está disponible'),
-  timeout('La conexión con la TNC agotó el tiempo de espera'),
-  connectionFailed('No se pudo conectar con la TNC'),
-  unknown('Se produjo un error Bluetooth');
+  unavailable('Bluetooth is not available'),
+  disabled('Bluetooth is disabled'),
+  permissionDenied('Bluetooth permission was not granted'),
+  deviceNotFound('The configured device is no longer available'),
+  timeout('The TNC connection timed out'),
+  connectionFailed('Could not connect to the TNC'),
+  unknown('A Bluetooth error occurred');
 
   const TncFailure(this.message);
   final String message;

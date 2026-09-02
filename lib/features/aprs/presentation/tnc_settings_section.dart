@@ -69,13 +69,13 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
     final devices = await controller.loadDevices();
     if (!mounted || devices == null) return;
     if (devices.isEmpty) {
-      _message('No hay dispositivos Bluetooth emparejados');
+      _message('No paired Bluetooth devices found');
       return;
     }
     final selected = await showDialog<TncDevice>(
       context: context,
       builder: (context) => SimpleDialog(
-        title: const Text('Seleccionar TNC emparejada'),
+        title: const Text('Select paired TNC'),
         children: devices
             .map(
               (device) => SimpleDialogOption(
@@ -102,10 +102,10 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
   }
 
   String get _openQspStatus => switch (controller.openQspCheckState) {
-    OpenQspCheckState.notChecked => 'No comprobado',
-    OpenQspCheckState.waiting => 'Esperando respuesta…',
-    OpenQspCheckState.available => 'Disponible',
-    OpenQspCheckState.noResponse => 'Sin respuesta',
+    OpenQspCheckState.notChecked => 'Not checked',
+    OpenQspCheckState.waiting => 'Waiting for response…',
+    OpenQspCheckState.available => 'Available',
+    OpenQspCheckState.noResponse => 'No response',
     OpenQspCheckState.error => 'Error',
   };
 
@@ -124,20 +124,20 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'TNC KISS Bluetooth',
+                'Bluetooth KISS TNC',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 16),
-              _ValueRow(label: 'Estado', value: state.label),
+              _ValueRow(label: 'Status', value: state.label),
               const SizedBox(height: 8),
               _ValueRow(
-                label: 'Dispositivo',
-                value: controller.device?.name ?? 'Ninguno',
+                label: 'Device',
+                value: controller.device?.name ?? 'None',
               ),
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const SizedBox(width: 105, child: Text('SSID APRS:')),
+                  const SizedBox(width: 105, child: Text('APRS SSID:')),
                   DropdownButton<int>(
                     key: const Key('aprsSsid'),
                     value: controller.aprsSsid,
@@ -156,7 +156,7 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const SizedBox(width: 105, child: Text('Path APRS:')),
+                  const SizedBox(width: 105, child: Text('APRS path:')),
                   Expanded(
                     child: DropdownButton<AprsPathMode>(
                       key: const Key('aprsPath'),
@@ -183,7 +183,7 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
               const SizedBox(height: 8),
               Row(
                 children: [
-                  const SizedBox(width: 105, child: Text('Forzar digi:')),
+                  const SizedBox(width: 105, child: Text('Force digi:')),
                   Expanded(
                     child: DropdownButton<String>(
                       key: const Key('forcedDigipeater'),
@@ -217,7 +217,7 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                       ? digipeaterRegistry.clearDiscovered
                       : null,
                   icon: const Icon(Icons.clear_all),
-                  label: const Text('Borrar lista'),
+                  label: const Text('Clear list'),
                 ),
               ),
               if (controller.failure != null) ...[
@@ -238,7 +238,7 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                       key: const Key('selectTncButton'),
                       onPressed: busy ? null : _selectDevice,
                       icon: const Icon(Icons.bluetooth_searching),
-                      label: const Text('Seleccionar TNC'),
+                      label: const Text('Select TNC'),
                     ),
                   if (controller.device != null &&
                       state != TncConnectionState.connected)
@@ -246,21 +246,21 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                       key: const Key('testTncButton'),
                       onPressed: busy ? null : controller.connect,
                       icon: const Icon(Icons.cable),
-                      label: const Text('Probar conexión'),
+                      label: const Text('Test connection'),
                     ),
                   if (state == TncConnectionState.connected)
                     FilledButton.tonalIcon(
                       key: const Key('disconnectTncButton'),
                       onPressed: controller.disconnect,
                       icon: const Icon(Icons.link_off),
-                      label: const Text('Desconectar'),
+                      label: const Text('Disconnect'),
                     ),
                   if (controller.device != null)
                     TextButton.icon(
                       key: const Key('forgetTncButton'),
                       onPressed: busy ? null : controller.forget,
                       icon: const Icon(Icons.delete_outline),
-                      label: const Text('Olvidar TNC'),
+                      label: const Text('Forget TNC'),
                     ),
                 ],
               ),
@@ -269,11 +269,11 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
               const SizedBox(height: 10),
               Text('OpenQSP', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 12),
-              _ValueRow(label: 'Estado', value: _openQspStatus),
+              _ValueRow(label: 'Status', value: _openQspStatus),
               if (capabilities is OpenQspCapabilities) ...[
                 const SizedBox(height: 8),
                 _ValueRow(
-                  label: 'Protocolo',
+                  label: 'Protocol',
                   value: '${capabilities.protocolVersion}',
                 ),
                 const SizedBox(height: 8),
@@ -292,7 +292,7 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                     ? controller.checkOpenQsp
                     : null,
                 icon: const Icon(Icons.cell_tower),
-                label: const Text('Comprobar OpenQSP'),
+                label: const Text('Check OpenQSP'),
               ),
             ],
           ),
