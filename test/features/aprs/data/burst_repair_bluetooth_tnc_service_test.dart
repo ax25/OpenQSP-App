@@ -244,7 +244,7 @@ void main() {
     delegate.emit(
       _kissThirdPartyMessage(
         igate: 'EA3IK-1',
-        source: openQspAprrsAddressee,
+        source: openQspAprsAddressee,
         addressee: 'EA3GNU',
         body: s2,
       ),
