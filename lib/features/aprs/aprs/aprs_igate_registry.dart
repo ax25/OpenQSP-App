@@ -40,29 +40,36 @@ class AprsIgateRegistry extends ChangeNotifier {
   }
 
   Future<void> _load() async {
-    final preferences = await SharedPreferences.getInstance();
-    final beforeKnown = Set<String>.from(_knownIgates);
-    final beforeForced = _forcedIgate;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final beforeKnown = Set<String>.from(_knownIgates);
+      final beforeForced = _forcedIgate;
 
-    for (final value in preferences.getStringList(_knownIgatesKey) ?? const []) {
-      final normalized = _normalize(value);
-      if (normalized != null) _knownIgates.add(normalized);
-    }
+      for (final value in preferences.getStringList(_knownIgatesKey) ?? const []) {
+        final normalized = _normalize(value);
+        if (normalized != null) _knownIgates.add(normalized);
+      }
 
-    final storedForced = _normalize(preferences.getString(_forcedIgateKey));
-    if (_forcedIgate == null && storedForced != null) {
-      _forcedIgate = storedForced;
-    }
-    if (_forcedIgate case final forced?) _knownIgates.add(forced);
+      final storedForced = _normalize(preferences.getString(_forcedIgateKey));
+      if (_forcedIgate == null && storedForced != null) {
+        _forcedIgate = storedForced;
+      }
+      if (_forcedIgate case final forced?) _knownIgates.add(forced);
 
-    _loaded = true;
-    _loading = null;
-    if (!setEquals(beforeKnown, _knownIgates) || beforeForced != _forcedIgate) {
-      notifyListeners();
+      _loaded = true;
+      if (!setEquals(beforeKnown, _knownIgates) || beforeForced != _forcedIgate) {
+        notifyListeners();
+      }
+    } finally {
+      _loading = null;
     }
   }
 
   /// Records an iGate immediately in memory and persists it in the background.
+  ///
+  /// Persistence is best-effort here because APRS parsing is deliberately
+  /// usable without a Flutter services binding (for example in pure parser
+  /// tests). The in-memory discovery must never make packet decoding fail.
   void observe(String value) {
     final normalized = _normalize(value);
     if (normalized == null || !_knownIgates.add(normalized)) return;
@@ -71,9 +78,18 @@ class AprsIgateRegistry extends ChangeNotifier {
   }
 
   Future<void> _mergeAndPersistKnown() async {
-    await load();
-    final preferences = await SharedPreferences.getInstance();
-    await preferences.setStringList(_knownIgatesKey, knownIgates);
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      for (final value in preferences.getStringList(_knownIgatesKey) ?? const []) {
+        final normalized = _normalize(value);
+        if (normalized != null) _knownIgates.add(normalized);
+      }
+      await preferences.setStringList(_knownIgatesKey, knownIgates);
+    } catch (_) {
+      // SharedPreferences needs a Flutter services binding. APRS parsing also
+      // runs in binding-free unit tests, where learning should remain purely
+      // in-memory rather than surfacing an asynchronous framework error.
+    }
   }
 
   Future<void> setForced(String? value) async {
