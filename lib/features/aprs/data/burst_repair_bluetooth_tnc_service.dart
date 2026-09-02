@@ -202,10 +202,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     String transactionId,
   ) {
     final transaction = decodeBase36(transactionId, 3);
-    // Core STORED is 01 44 00 00. Build a one-fragment Q2 envelope for
-    // downstream consumers. Preserve the logical third-party OpenQSP source
-    // and destination rather than the outer RF/IGate AX.25 wrapper. This
-    // synthetic frame never goes on RF.
     final syntheticBody =
         'Q2${encodeOpenQspBase91([transaction, 0x00, 0x01, 0x44, 0x00, 0x00])}';
     final information = _messageEncoder.encode(
@@ -251,10 +247,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     _sentBursts.remove(transactionId)?.retryTimer?.cancel();
   }
 
-  /// Stop reliability work for a request whose logical response proves that
-  /// the server already received and processed the original Q2 transaction.
-  /// Response frames may use a different transaction ID, so upper protocol
-  /// layers need an explicit way to retire the request-side retry state.
   void completeOutboundTransaction(String transactionId) {
     _removeSentBurst(transactionId);
   }
@@ -266,8 +258,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       case OpenQspBurstMissing(:final transactionId, :final missing):
         final burst = _sentBursts[transactionId];
         if (burst == null) return;
-        // N2 is a valid response, so silence-based full-burst retry stops.
-        // From here reliability is selective: resend only requested fragments.
         burst.retryTimer?.cancel();
         burst.retryTimer = null;
         for (final index in missing) {
@@ -292,20 +282,14 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 
     if (_completedReceived.containsKey(key)) {
       _debugBurst(fragment.transactionId, duplicate: true);
-      // Any fragment received after completion means the sender may still be
-      // retransmitting because our previous ACK was lost. Reply immediately
-      // with another ACK so the remote side can stop, even if the original
-      // delayed completion ACK has not fired yet.
       _completedAckTimers.remove(key)?.cancel();
       unawaited(
         _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
       );
-      // Keep the duplicate out of the burst state machine, but let the raw
-      // APRS frame continue downstream so the traffic monitor can show the
-      // exact IGate/APRS/RF path that caused this recovery ACK. The upper
-      // OpenQSP decoder has its own completed-transaction cache, so this does
-      // not re-deliver the message to application consumers.
-      return false;
+      // This transaction has already completed and has already been ACKed (or
+      // has an ACK in flight). Keep later RF/IGate copies below the application
+      // receive pipeline so they cannot re-arm the "receiving message" UI.
+      return true;
     }
 
     var burst = _receivedBursts[key];
@@ -329,10 +313,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       _receivedBursts.remove(key);
       _completedReceived[key] = now;
       _debugBurst(fragment.transactionId, duplicate: false);
-      // Once one server response has completed, any older partial receive
-      // transaction is stale. Cancel and discard all NACK state so a previous
-      // transaction cannot keep requesting fragments after the message has
-      // already been delivered.
       _cancelAllReceiveRepairState();
       _completedAckTimers[key]?.cancel();
       _completedAckTimers[key] = Timer(finalFragmentRepairDelay, () {
