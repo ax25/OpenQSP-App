@@ -13,6 +13,10 @@ void main() {
     await registry.resetForTesting();
   });
 
+  tearDown(() async {
+    await registry.resetForTesting();
+  });
+
   test('starts with no forced digipeater', () {
     expect(registry.knownIgates, isEmpty);
     expect(registry.forcedIgate, isNull);
@@ -69,22 +73,52 @@ void main() {
     expect(registry.forcedPath.single.ssid, 14);
   });
 
-  test('known digipeaters and forced selection survive reload', () async {
-    registry.observe('EB3EHJ-14');
-    await registry.setForced('EB3EHJ-14');
-
+  test('known digipeaters and forced selection survive reload while fresh',
+      () async {
+    final now = DateTime.now().toUtc();
     SharedPreferences.setMockInitialValues(<String, Object>{
       'tnc.aprs.knownIgates': <String>['EB3EHJ-14', 'ED3YAB-14'],
       'tnc.aprs.forcedIgate': 'ED3YAB-14',
-    });
-    await registry.resetForTesting();
-    SharedPreferences.setMockInitialValues(<String, Object>{
-      'tnc.aprs.knownIgates': <String>['EB3EHJ-14', 'ED3YAB-14'],
-      'tnc.aprs.forcedIgate': 'ED3YAB-14',
+      'tnc.aprs.digipeaterLastSeen': <String>[
+        'EB3EHJ-14|${now.millisecondsSinceEpoch}',
+        'ED3YAB-14|${now.millisecondsSinceEpoch}',
+      ],
     });
     await registry.load();
 
     expect(registry.knownIgates, const ['EB3EHJ-14', 'ED3YAB-14']);
     expect(registry.forcedIgate, 'ED3YAB-14');
+  });
+
+  test('digipeater expires after 15 minutes without reception', () async {
+    registry.observe('EB3EHJ-14');
+    final future = DateTime.now().toUtc().add(const Duration(minutes: 16));
+
+    await registry.expireNowForTesting(future);
+
+    expect(registry.knownIgates, isNot(contains('EB3EHJ-14')));
+  });
+
+  test('selected digipeater never expires', () async {
+    registry.observe('ED3YAB-14');
+    await registry.setForced('ED3YAB-14');
+    final future = DateTime.now().toUtc().add(const Duration(hours: 1));
+
+    await registry.expireNowForTesting(future);
+
+    expect(registry.knownIgates, contains('ED3YAB-14'));
+    expect(registry.forcedIgate, 'ED3YAB-14');
+  });
+
+  test('clear list preserves selected digipeater', () async {
+    registry.observe('EB3EHJ-14');
+    registry.observe('ED3YAB-14');
+    await registry.setForced('ED3YAB-14');
+
+    await registry.clearDiscovered();
+
+    expect(registry.knownIgates, const ['ED3YAB-14']);
+    expect(registry.forcedIgate, 'ED3YAB-14');
+    expect(registry.hasClearableDigipeaters, isFalse);
   });
 }

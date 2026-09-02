@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
 import '../../../core/openqsp_protocol/openqsp_codec.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
+import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../aprs/aprs_message_encoder.dart';
 import '../ax25/ax25_decoder.dart';
 import '../ax25/ax25_address.dart';
@@ -114,6 +116,8 @@ class TncSettingsController extends ChangeNotifier {
   int aprsRejects = 0;
   int openQspRxPackets = 0;
   int openQspFragmentsRx = 0;
+  int openQspMessageFragmentsRx = 0;
+  int? lastOpenQspMessageFragmentSequence;
   int openQspFramesRx = 0;
   int openQspErrors = 0;
   OpenQspFrameObject? lastOpenQspObject;
@@ -129,6 +133,7 @@ class TncSettingsController extends ChangeNotifier {
   final OpenQspAprsReassembler _trafficTxReassembler = OpenQspAprsReassembler();
   final Map<String, _CompletedOpenQspTransaction>
   _completedOpenQspTransactions = {};
+  final Map<String, int> _incomingMessageTransactions = {};
   static const OpenQspCodec _openQspCodec = OpenQspCodec();
   static const Ax25Encoder _ax25Encoder = Ax25Encoder();
   static const AprsMessageEncoder _messageEncoder = AprsMessageEncoder();
@@ -624,6 +629,33 @@ class TncSettingsController extends ChangeNotifier {
     return message.addressee == localAddressee;
   }
 
+  static int? _messageSequenceFromFirstFragment(OpenQspAprsFragment fragment) {
+    if (fragment.index != 0) return null;
+    List<int> prefix;
+    if (fragment.version == 2) {
+      final raw = fragment.rawData;
+      if (raw == null) return null;
+      prefix = raw;
+    } else {
+      try {
+        final padding = (4 - fragment.data.length % 4) % 4;
+        prefix = base64Url.decode(
+          fragment.data.padRight(fragment.data.length + padding, '='),
+        );
+      } on Object {
+        return null;
+      }
+    }
+    if (prefix.length < 8 || prefix[1] != OpenQspOperation.message.code) {
+      return null;
+    }
+    final sequence = prefix[4] * 0x1000000 +
+        prefix[5] * 0x10000 +
+        prefix[6] * 0x100 +
+        prefix[7];
+    return sequence == 0 ? null : sequence;
+  }
+
   void _decodeOpenQsp(AprsTextMessage message) {
     try {
       final fragment = parseFragment(message.text);
@@ -635,6 +667,15 @@ class TncSettingsController extends ChangeNotifier {
       );
       final transactionKey =
           '${message.frame.source}|${fragment.transactionId}';
+      final firstSequence = _messageSequenceFromFirstFragment(fragment);
+      if (firstSequence != null) {
+        _incomingMessageTransactions[transactionKey] = firstSequence;
+      }
+      final messageSequence = _incomingMessageTransactions[transactionKey];
+      if (messageSequence != null) {
+        openQspMessageFragmentsRx++;
+        lastOpenQspMessageFragmentSequence = messageSequence;
+      }
       final bytes = _reassembler.add(
         peer: message.frame.source.toString(),
         fragment: fragment,
@@ -643,9 +684,13 @@ class TncSettingsController extends ChangeNotifier {
       if (bytes == null) return;
 
       final completed = _completedOpenQspTransactions[transactionKey];
-      if (completed != null && listEquals(completed.bytes, bytes)) return;
+      if (completed != null && listEquals(completed.bytes, bytes)) {
+        _incomingMessageTransactions.remove(transactionKey);
+        return;
+      }
 
       final decoded = _openQspCodec.decode(bytes);
+      _incomingMessageTransactions.remove(transactionKey);
       openQspFramesRx++;
       lastOpenQspObject = decoded.object;
       lastValidOpenQspRx = now;

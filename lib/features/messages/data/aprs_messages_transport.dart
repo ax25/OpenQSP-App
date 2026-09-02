@@ -375,6 +375,7 @@ final class AprsMessagesTransport
     if (since == null || since < 0 || since > 0xffffffff) {
       throw ArgumentError.value(cursor, 'cursor', 'Invalid APRS message cursor');
     }
+    session.setMessageCursor(since);
     final pending = _PendingSync(since);
     _pendingSync = pending;
     pending.touch(responseTimeout);
