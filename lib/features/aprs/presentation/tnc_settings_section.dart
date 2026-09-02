@@ -209,6 +209,17 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                   ),
                 ],
               ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  key: const Key('clearDigipeatersButton'),
+                  onPressed: digipeaterRegistry.hasClearableDigipeaters
+                      ? digipeaterRegistry.clearDiscovered
+                      : null,
+                  icon: const Icon(Icons.clear_all),
+                  label: const Text('Borrar lista'),
+                ),
+              ),
               if (controller.failure != null) ...[
                 const SizedBox(height: 10),
                 Text(
