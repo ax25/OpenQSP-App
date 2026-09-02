@@ -122,6 +122,37 @@ void main() {
     await subscription.cancel();
   });
 
+  test('duplicate completed Q2 remains visible and emits recovery A2', () async {
+    final delegate = _FakeBluetoothTncService();
+    final link = BurstRepairBluetoothTncService(
+      delegate,
+      finalFragmentRepairDelay: const Duration(milliseconds: 10),
+    );
+    final forwarded = <List<int>>[];
+    final subscription = link.incomingBytes.listen(forwarded.add);
+    final packet = _kissMessage(
+      source: openQspAprsAddressee,
+      addressee: 'EA3GNU',
+      body: _q2('00D', 0, 1, [1, 5, 0, 0]).body,
+    );
+
+    delegate.emit(packet);
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(forwarded, hasLength(1));
+    expect(delegate.sent, hasLength(1));
+
+    delegate.emit(packet);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(forwarded, hasLength(2));
+    expect(forwarded.last, packet);
+    expect(delegate.sent, hasLength(2));
+    final recoveryAck = parseOpenQspBurstControl(_body(delegate.sent.last));
+    expect(recoveryAck, isA<OpenQspBurstAck>());
+    expect((recoveryAck! as OpenQspBurstAck).transactionId, '00D');
+    await subscription.cancel();
+  });
+
   test('S2 is translated to a downstream one-fragment Core STORED', () async {
     final delegate = _FakeBluetoothTncService();
     final link = BurstRepairBluetoothTncService(delegate);
