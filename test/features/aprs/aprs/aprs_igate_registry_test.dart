@@ -36,7 +36,9 @@ void main() {
       digipeaters: const [],
       control: 0x03,
       pid: 0xf0,
-      information: '}OQSP>APOQSP,TCPIP*::EA3GNU  :hello'.codeUnits,
+      information:
+          '}OQSP>APOQSP,TCPIP*,qAC,EA3IK-6::EA3GNU-5 :Q1:ABC:00/01:AUYABQEAAAAP{00'
+              .codeUnits,
     );
 
     final packet = const AprsParser().parse(frame);
