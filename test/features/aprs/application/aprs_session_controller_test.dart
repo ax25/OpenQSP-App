@@ -67,39 +67,65 @@ final class _Service implements BluetoothTncService {
 
   void receiveCapabilities({bool commitAck = false}) {
     const codec = OpenQspCodec();
-    const messageEncoder = AprsMessageEncoder();
-    const ax25Encoder = Ax25Encoder();
-    const kissEncoder = KissEncoder();
     final core = codec.encode(
       OpenQspCapabilities(
         protocolVersion: 1,
         capabilities: commitAck ? 0x1f : 0x0f,
       ),
     );
-    final fragment = fragmentFrame(core, 'ABC').single;
-    final information = messageEncoder.encode(
-      addressee: 'EA3GNU',
-      body: fragment.body,
-      messageId: '00',
-    );
-    final ax25 = ax25Encoder.encodeUi(
-      destination: const Ax25Address(
-        callsign: 'APOQSP',
-        ssid: 0,
-        hasBeenRepeated: false,
-        isLast: false,
+    _receiveFragments(fragmentFrame(core, 'ABC'));
+  }
+
+  List<OpenQspAprsFragment> messageFragments({String transactionId = 'MSG'}) {
+    const codec = OpenQspCodec();
+    final core = codec.encode(
+      OpenQspMessage(
+        sequence: 7,
+        createdAt: 1700000000,
+        author: 'EA3ABC',
+        recipient: 'EA3GNU',
+        body: List.filled(150, 'x').join(),
       ),
-      source: const Ax25Address(
-        callsign: 'OQSP',
-        ssid: 0,
-        hasBeenRepeated: false,
-        isLast: true,
-      ),
-      information: information,
+      unsolicited: true,
     );
-    _incoming.add(
-      kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
-    );
+    return fragmentFrame(core, transactionId);
+  }
+
+  void receiveFragment(OpenQspAprsFragment fragment) =>
+      _receiveFragments([fragment]);
+
+  void receiveMessage({String transactionId = 'MSG'}) =>
+      _receiveFragments(messageFragments(transactionId: transactionId));
+
+  void _receiveFragments(List<OpenQspAprsFragment> fragments) {
+    const messageEncoder = AprsMessageEncoder();
+    const ax25Encoder = Ax25Encoder();
+    const kissEncoder = KissEncoder();
+    for (final fragment in fragments) {
+      final information = messageEncoder.encode(
+        addressee: 'EA3GNU',
+        body: fragment.body,
+        messageId: '00',
+      );
+      final ax25 = ax25Encoder.encodeUi(
+        destination: const Ax25Address(
+          callsign: 'APOQSP',
+          ssid: 0,
+          hasBeenRepeated: false,
+          isLast: false,
+        ),
+        source: const Ax25Address(
+          callsign: 'OQSP',
+          ssid: 0,
+          hasBeenRepeated: false,
+          isLast: true,
+        ),
+        information: information,
+      );
+      _incoming.add(
+        kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
+      );
+    }
   }
 }
 
@@ -194,7 +220,7 @@ void main() {
 
     expect(session.state, AprsSessionState.slow);
     expect(session.serverReachable, isTrue);
-    expect(session.statusLabel, 'APRS Server Connection Slow');
+    expect(session.statusLabel, 'APRS Connection Slow');
   });
 
   test('CAPABILITIES advertises APRS commit ACK support', () async {
@@ -205,6 +231,65 @@ void main() {
 
     expect(session.serverCapabilities, 0x1f);
     expect(session.supportsAprsCommitAck, isTrue);
+  });
+
+  test('receive indicator fails after silence, hides at TTL and recovers', () async {
+    session.dispose();
+    session = AprsSessionController(
+      tncController: tnc,
+      receiveFailureDelay: const Duration(milliseconds: 15),
+      receiveHideDelay: const Duration(milliseconds: 35),
+      receiveCompletedVisibleDuration: const Duration(milliseconds: 10),
+    );
+
+    await session.activate();
+    service.receiveCapabilities();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.state, AprsSessionState.available);
+
+    final fragments = service.messageFragments();
+    expect(fragments.length, greaterThan(1));
+    service.receiveFragment(fragments.first);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.messageReceiveState, AprsMessageReceiveState.receiving);
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.messageReceiveState, AprsMessageReceiveState.failed);
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.messageReceiveState, AprsMessageReceiveState.hidden);
+    expect(session.state, AprsSessionState.slow);
+    expect(session.statusLabel, 'APRS Connection Slow');
+
+    service.receiveFragment(fragments[1]);
+    await Future<void>.delayed(Duration.zero);
+    expect(session.messageReceiveState, AprsMessageReceiveState.receiving);
+    expect(session.state, AprsSessionState.available);
+  });
+
+  test('complete message shows check briefly and records its peer', () async {
+    session.dispose();
+    session = AprsSessionController(
+      tncController: tnc,
+      receiveFailureDelay: const Duration(milliseconds: 30),
+      receiveHideDelay: const Duration(milliseconds: 60),
+      receiveCompletedVisibleDuration: const Duration(milliseconds: 12),
+    );
+
+    await session.activate();
+    service.receiveCapabilities();
+    await Future<void>.delayed(Duration.zero);
+    service.receiveMessage(transactionId: 'M01');
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.messageReceiveState, AprsMessageReceiveState.completed);
+    expect(session.messageReceivePeer, 'EA3ABC');
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.messageReceiveState, AprsMessageReceiveState.hidden);
+    expect(session.messageReceivePeer, isNull);
   });
 }
 
