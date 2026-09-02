@@ -53,7 +53,7 @@ class TncSettingsController extends ChangeNotifier {
     required this.service,
     this.sourceCallsign,
     this.openQspTimeout = const Duration(seconds: 65),
-    this.openQspRetryInterval = const Duration(seconds: 31),
+    this.openQspRetryInterval = const Duration(seconds: 15),
   }) {
     _kissTransport = KissTransport(service);
     _byteSubscription = service.incomingBytes.listen((bytes) {
@@ -86,6 +86,7 @@ class TncSettingsController extends ChangeNotifier {
   final BluetoothTncService service;
   final String? sourceCallsign;
   final Duration openQspTimeout;
+  @Deprecated('Capability retries are handled by the burst reliability layer.')
   final Duration openQspRetryInterval;
   TncConnectionState state = TncConnectionState.loading;
   TncDevice? device;
@@ -121,7 +122,6 @@ class TncSettingsController extends ChangeNotifier {
   OpenQspCheckState openQspCheckState = OpenQspCheckState.notChecked;
   int aprsSsid = 0;
   Timer? _openQspTimer;
-  Timer? _openQspRetryTimer;
   Timer? _openQspCountdownTimer;
   DateTime? _openQspCheckDeadline;
   final OpenQspAprsReassembler _reassembler = OpenQspAprsReassembler();
@@ -676,8 +676,6 @@ class TncSettingsController extends ChangeNotifier {
   void _cancelOpenQspCheckTimers() {
     _openQspTimer?.cancel();
     _openQspTimer = null;
-    _openQspRetryTimer?.cancel();
-    _openQspRetryTimer = null;
     _openQspCountdownTimer?.cancel();
     _openQspCountdownTimer = null;
   }
@@ -743,18 +741,8 @@ class TncSettingsController extends ChangeNotifier {
       await _sendCapabilitiesRequest(call, fragments);
       if (openQspCheckState != OpenQspCheckState.waiting) return;
 
-      _openQspRetryTimer = Timer.periodic(openQspRetryInterval, (timer) {
-        if (openQspCheckState != OpenQspCheckState.waiting ||
-            openQspCheckRemaining == Duration.zero) {
-          timer.cancel();
-          return;
-        }
-        unawaited(
-          _sendCapabilitiesRequest(call, fragments).catchError((Object error) {
-            _debugColor('OpenQSP APRS retry TX error: $error', _ansiRed);
-          }),
-        );
-      });
+      // Retransmission cadence belongs exclusively to the burst-repair layer.
+      // This controller only owns the overall grace period and UI countdown.
       _openQspCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
         if (openQspCheckState == OpenQspCheckState.waiting) _notify();
       });
