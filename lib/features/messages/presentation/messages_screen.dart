@@ -1,14 +1,21 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../../aprs/application/aprs_session_controller.dart';
+import '../../aprs/presentation/aprs_receive_indicator.dart';
 import '../application/messages_controller.dart';
 import '../domain/message_models.dart';
 import 'conversation_screen.dart';
 import 'message_date_format.dart';
 
 class MessagesScreen extends StatefulWidget {
-  const MessagesScreen({super.key, required this.controller});
+  const MessagesScreen({
+    super.key,
+    required this.controller,
+    this.aprsSession,
+  });
   final MessagesController controller;
+  final AprsSessionController? aprsSession;
 
   @override
   State<MessagesScreen> createState() => _MessagesScreenState();
@@ -91,6 +98,7 @@ class _MessagesScreenState extends State<MessagesScreen> {
         builder: (_) => ConversationScreen(
           controller: widget.controller,
           remoteCallsign: remote,
+          aprsSession: widget.aprsSession,
         ),
       ),
     );
@@ -100,9 +108,19 @@ class _MessagesScreenState extends State<MessagesScreen> {
   @override
   Widget build(BuildContext context) {
     final controller = widget.controller;
+    final session = widget.aprsSession;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Messages'),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text('Messages'),
+            if (session != null) ...[
+              const SizedBox(width: 10),
+              AprsReceiveIndicator(session: session),
+            ],
+          ],
+        ),
         actions: [
           IconButton(
             key: const Key('getNewMessages'),
@@ -179,6 +197,11 @@ class _MessagesScreenState extends State<MessagesScreen> {
       itemBuilder: (_, index) {
         final item = controller.conversations[index];
         final latest = item.latestMessage;
+        final session = widget.aprsSession;
+        final showPeerStatus = session != null &&
+            session.messageReceivePeer != null &&
+            session.messageReceivePeer!.toUpperCase() ==
+                item.remoteCallsign.toUpperCase();
         return ListTile(
           key: Key('conversation-${item.remoteCallsign}'),
           title: Text(item.remoteCallsign),
@@ -192,6 +215,14 @@ class _MessagesScreenState extends State<MessagesScreen> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (showPeerStatus) ...[
+                AprsReceiveIndicator(
+                  session: session,
+                  peer: item.remoteCallsign,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+              ],
               if (latest != null)
                 Text(formatConversationTimestamp(latest.createdAt)),
               if (item.unreadCount > 0) ...[
