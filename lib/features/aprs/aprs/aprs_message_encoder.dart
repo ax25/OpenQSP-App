@@ -29,8 +29,11 @@ final class AprsMessageEncoder {
         !RegExp(r'^[A-Za-z0-9]{1,5}$').hasMatch(messageId)) {
       throw const AprsMessageEncodeException('invalid APRS message ID');
     }
+    // OpenQSP Q2 provides transaction-level A2/N2/S2 reliability. Native APRS
+    // message IDs would re-enable per-fragment ACKs and are therefore omitted.
+    final effectiveMessageId = body.startsWith('Q2') ? null : messageId;
     final text = ':${addressee.padRight(9)}:$body'
-        '${messageId == null ? '' : '{$messageId'}';
+        '${effectiveMessageId == null ? '' : '{$effectiveMessageId'}';
     if (text.length > 78) {
       throw const AprsMessageEncodeException('APRS message is too long');
     }
