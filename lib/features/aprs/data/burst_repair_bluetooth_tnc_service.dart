@@ -23,17 +23,19 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     this.repairDelay = const Duration(seconds: 5),
     this.finalFragmentRepairDelay = const Duration(seconds: 2),
     this.repairRetryInterval = const Duration(seconds: 15),
+    this.silentRetryTtl = const Duration(seconds: 65),
     this.cacheTtl = openQspAprsDefaultTtl,
     this.completedCacheTtl = const Duration(minutes: 10),
   }) {
     if (repairDelay <= Duration.zero ||
         finalFragmentRepairDelay <= Duration.zero ||
         repairRetryInterval <= Duration.zero ||
+        silentRetryTtl <= Duration.zero ||
         cacheTtl <= Duration.zero ||
         completedCacheTtl <= Duration.zero) {
       throw ArgumentError(
-        'repairDelay, finalFragmentRepairDelay, repairRetryInterval, cacheTtl '
-        'and completedCacheTtl must be positive',
+        'repairDelay, finalFragmentRepairDelay, repairRetryInterval, '
+        'silentRetryTtl, cacheTtl and completedCacheTtl must be positive',
       );
     }
     _incomingFrameSubscription = _incomingDecoder.frames.listen(_onIncomingFrame);
@@ -44,6 +46,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   final Duration repairDelay;
   final Duration finalFragmentRepairDelay;
   final Duration repairRetryInterval;
+  final Duration silentRetryTtl;
   final Duration cacheTtl;
   final Duration completedCacheTtl;
 
@@ -126,7 +129,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   void _armSilentRetry(String transactionId, _SentBurst burst) {
     burst.retryTimer?.cancel();
     final now = DateTime.now().toUtc();
-    if (now.difference(burst.createdAt) >= cacheTtl) {
+    if (now.difference(burst.createdAt) >= silentRetryTtl) {
       _sentBursts.remove(transactionId);
       return;
     }
@@ -140,7 +143,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     if (!identical(_sentBursts[transactionId], burst)) return;
     burst.retryTimer = null;
     final now = DateTime.now().toUtc();
-    if (now.difference(burst.createdAt) >= cacheTtl) {
+    if (now.difference(burst.createdAt) >= silentRetryTtl) {
       _sentBursts.remove(transactionId);
       return;
     }
@@ -391,7 +394,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   void _expireCaches(DateTime now) {
     final expiredSent = <String>[];
     for (final entry in _sentBursts.entries) {
-      if (now.difference(entry.value.createdAt) >= cacheTtl) {
+      if (now.difference(entry.value.createdAt) >= silentRetryTtl) {
         entry.value.retryTimer?.cancel();
         expiredSent.add(entry.key);
       }
