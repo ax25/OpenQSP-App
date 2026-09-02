@@ -2,12 +2,14 @@ import 'dart:async';
 
 import '../../../core/openqsp_protocol/openqsp_codec.dart';
 import '../../../core/openqsp_protocol/openqsp_models.dart';
+import '../../../core/openqsp_protocol/openqsp_operation.dart';
 import '../aprs/aprs_message_encoder.dart';
 import '../aprs/aprs_packet.dart';
 import '../ax25/ax25_address.dart';
 import '../ax25/ax25_encoder.dart';
 import '../data/bluetooth_tnc_service.dart';
 import '../data/bluetooth_tnc_storage.dart';
+import '../data/burst_repair_bluetooth_tnc_service.dart';
 import '../kiss/kiss_frame.dart';
 import '../openqsp_carriage/openqsp_aprs_carriage.dart';
 import 'tnc_settings_controller.dart';
@@ -26,6 +28,7 @@ final class RetryingTncSettingsController extends TncSettingsController {
     super.openQspTimeout,
     super.openQspRetryInterval,
   }) {
+    _lastObservedOpenQspFramesRx = openQspFramesRx;
     addListener(_onControllerChanged);
   }
 
@@ -35,6 +38,7 @@ final class RetryingTncSettingsController extends TncSettingsController {
 
   Timer? _capabilitiesRetryTimer;
   bool _disposed = false;
+  int _lastObservedOpenQspFramesRx = 0;
 
   @override
   Future<void> checkOpenQsp() async {
@@ -43,7 +47,7 @@ final class RetryingTncSettingsController extends TncSettingsController {
     if (_disposed || openQspCheckState != OpenQspCheckState.waiting) return;
 
     final call = sourceCallsign;
-    final transactionId = _latestCapabilitiesTransactionId();
+    final transactionId = _latestRequestTransactionId('GET_CAPABILITIES');
     if (call == null || transactionId == null) return;
 
     final core = _codec.encode(const OpenQspGetCapabilities());
@@ -57,8 +61,10 @@ final class RetryingTncSettingsController extends TncSettingsController {
     });
   }
 
-  String? _latestCapabilitiesTransactionId() {
-    final pattern = RegExp(r'GET_CAPABILITIES\s+\|\s+txn=([0-9A-Z]{3})');
+  String? _latestRequestTransactionId(String operation) {
+    final pattern = RegExp(
+      '${RegExp.escape(operation)}.*\\|\\s+txn=([0-9A-Z]{3})',
+    );
     for (final entry in aprsConsoleEntries.reversed) {
       if (entry.direction != AprsConsoleDirection.tx ||
           entry.type != 'OPENQSP') {
@@ -68,6 +74,27 @@ final class RetryingTncSettingsController extends TncSettingsController {
       if (match != null) return match.group(1);
     }
     return null;
+  }
+
+  void _retireRequestRetryFor(OpenQspFrameObject object) {
+    final operation = switch (object) {
+      OpenQspCapabilities() => 'GET_CAPABILITIES',
+      OpenQspMessage() => 'GET_NEW_MESSAGES',
+      OpenQspEnd(:final requestOperation)
+          when requestOperation == OpenQspOperation.getNewMessages =>
+        'GET_NEW_MESSAGES',
+      OpenQspError(:final requestOperation)
+          when requestOperation == OpenQspOperation.getNewMessages.code =>
+        'GET_NEW_MESSAGES',
+      _ => null,
+    };
+    if (operation == null) return;
+    final transactionId = _latestRequestTransactionId(operation);
+    if (transactionId == null) return;
+    final currentService = service;
+    if (currentService is BurstRepairBluetoothTncService) {
+      currentService.completeOutboundTransaction(transactionId);
+    }
   }
 
   Future<void> _retryCapabilities(
@@ -107,6 +134,12 @@ final class RetryingTncSettingsController extends TncSettingsController {
   }
 
   void _onControllerChanged() {
+    final frameCount = openQspFramesRx;
+    if (frameCount != _lastObservedOpenQspFramesRx) {
+      _lastObservedOpenQspFramesRx = frameCount;
+      final object = lastOpenQspObject;
+      if (object != null) _retireRequestRetryFor(object);
+    }
     if (openQspCheckState != OpenQspCheckState.waiting) {
       _cancelCapabilitiesRetry();
     }
