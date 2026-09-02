@@ -31,33 +31,77 @@ class AprsReceiveIndicator extends StatelessWidget {
           return const SizedBox.shrink();
         }
 
-        final (icon, tooltip, color) = switch (state) {
-          AprsMessageReceiveState.receiving => (
-              Icons.mark_chat_unread_outlined,
-              'Receiving APRS message…',
-              Theme.of(context).colorScheme.primary,
+        final tooltip = switch (state) {
+          AprsMessageReceiveState.receiving => 'Receiving APRS message…',
+          AprsMessageReceiveState.failed => 'APRS message reception stalled',
+          AprsMessageReceiveState.completed => 'APRS message received',
+          AprsMessageReceiveState.hidden => throw StateError('hidden handled above'),
+        };
+        final color = switch (state) {
+          AprsMessageReceiveState.receiving => Theme.of(context).colorScheme.primary,
+          AprsMessageReceiveState.failed => Theme.of(context).colorScheme.error,
+          AprsMessageReceiveState.completed => Colors.green,
+          AprsMessageReceiveState.hidden => throw StateError('hidden handled above'),
+        };
+
+        final icon = switch (state) {
+          AprsMessageReceiveState.receiving => _ReceivingMessageIcon(
+              key: const Key('aprsReceive-receiving'),
+              size: size,
+              color: color,
             ),
-          AprsMessageReceiveState.failed => (
+          AprsMessageReceiveState.failed => Icon(
               Icons.sms_failed_outlined,
-              'APRS message reception stalled',
-              Theme.of(context).colorScheme.error,
+              key: const Key('aprsReceive-failed'),
+              size: size,
+              color: color,
             ),
-          AprsMessageReceiveState.completed => (
+          AprsMessageReceiveState.completed => Icon(
               Icons.mark_chat_read_outlined,
-              'APRS message received',
-              Colors.green,
+              key: const Key('aprsReceive-completed'),
+              size: size,
+              color: color,
             ),
           AprsMessageReceiveState.hidden => throw StateError('hidden handled above'),
         };
 
         return Tooltip(
           message: tooltip,
-          child: Semantics(
-            label: tooltip,
-            child: Icon(icon, key: Key('aprsReceive-${state.name}'), size: size, color: color),
-          ),
+          child: Semantics(label: tooltip, child: icon),
         );
       },
+    );
+  }
+}
+
+class _ReceivingMessageIcon extends StatelessWidget {
+  const _ReceivingMessageIcon({
+    super.key,
+    required this.size,
+    required this.color,
+  });
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: size,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Icon(Icons.chat_bubble_outline, size: size, color: color),
+          Padding(
+            padding: EdgeInsets.only(bottom: size * 0.10),
+            child: Icon(
+              Icons.arrow_downward_rounded,
+              size: size * 0.52,
+              color: color,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
