@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import '../aprs/aprs_igate_registry.dart';
 import '../aprs/aprs_packet.dart';
 import '../aprs/aprs_parser.dart';
 import '../ax25/ax25_decoder.dart';
@@ -13,6 +14,7 @@ import 'aprs_path_storage.dart';
 import 'bluetooth_tnc_service.dart';
 
 /// Rewrites outbound OpenQSP APRS UI frames with the configured RF path.
+/// A forced iGate, when selected, takes precedence over the normal APRS path.
 /// All unrelated KISS traffic is passed through unchanged.
 final class AprsPathBluetoothTncService implements BluetoothTncService {
   AprsPathBluetoothTncService(
@@ -61,11 +63,13 @@ final class AprsPathBluetoothTncService implements BluetoothTncService {
       final aprs = _aprsParser.parse(ax25);
       if (aprs is! AprsTextMessage || !aprs.isForOpenQsp) return data;
 
+      await AprsIgateRegistry.instance.load();
+      final forcedPath = AprsIgateRegistry.instance.forcedPath;
       final mode = await storage.read();
       final payload = _ax25Encoder.encodeUi(
         destination: ax25.destination,
         source: ax25.source,
-        digipeaters: mode.digipeaters,
+        digipeaters: forcedPath.isNotEmpty ? forcedPath : mode.digipeaters,
         information: ax25.information,
       );
       return _kissEncoder.encode(
