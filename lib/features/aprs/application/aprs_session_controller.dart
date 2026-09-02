@@ -25,6 +25,8 @@ enum AprsActivityState {
   noNewMessages,
 }
 
+enum AprsMessageReceiveState { hidden, receiving, failed, completed }
+
 /// Owns the operational APRS mode independently from any presentation screen.
 ///
 /// The underlying [TncSettingsController] remains the single owner of the
@@ -34,26 +36,51 @@ final class AprsSessionController extends ChangeNotifier {
   AprsSessionController({
     required this.tncController,
     this.slowResponseThreshold = const Duration(minutes: 1),
+    this.receiveFailureDelay = const Duration(minutes: 1),
+    this.receiveHideDelay = const Duration(minutes: 2),
+    this.receiveCompletedVisibleDuration = const Duration(seconds: 5),
   }) {
+    if (receiveFailureDelay <= Duration.zero ||
+        receiveHideDelay <= receiveFailureDelay ||
+        receiveCompletedVisibleDuration <= Duration.zero) {
+      throw ArgumentError(
+        'receive delays must be positive and hide delay must exceed failure delay',
+      );
+    }
     tncController.addListener(_onTncChanged);
     _lastObservedFramesRx = tncController.openQspFramesRx;
+    _lastObservedFragmentsRx = tncController.openQspFragmentsRx;
   }
 
   final TncSettingsController tncController;
   final Duration slowResponseThreshold;
+  final Duration receiveFailureDelay;
+  final Duration receiveHideDelay;
+  final Duration receiveCompletedVisibleDuration;
   bool _active = false;
   bool _disposed = false;
   Timer? _ageTimer;
+  Timer? _receiveFailureTimer;
+  Timer? _receiveHideTimer;
+  Timer? _receiveCompletedTimer;
   AprsActivityState _activityState = AprsActivityState.idle;
+  AprsMessageReceiveState _messageReceiveState = AprsMessageReceiveState.hidden;
+  String? _messageReceivePeer;
   int _lastObservedFramesRx = 0;
+  int _lastObservedFragmentsRx = 0;
   DateTime? _capabilitiesCheckStartedAt;
   AprsSessionState? _responseHealthOverride;
+  bool _receiveTimeoutSlow = false;
   int _serverCapabilities = 0;
   final List<OpenQspMessage> _recentMessages = [];
   static const int _recentMessageLimit = 64;
 
   bool get active => _active;
   AprsActivityState get activityState => _activityState;
+  AprsMessageReceiveState get messageReceiveState => _messageReceiveState;
+  String? get messageReceivePeer => _messageReceivePeer;
+  bool get hasMessageReceiveIndicator =>
+      _messageReceiveState != AprsMessageReceiveState.hidden;
   String? get lastIgate => tncController.lastOpenQspIgate;
   DateTime? get lastServerRx => tncController.lastValidOpenQspRx;
   bool get serverReachable =>
@@ -92,7 +119,7 @@ final class AprsSessionController extends ChangeNotifier {
           ? 'Connecting APRS... ${tncController.openQspCheckRemainingSeconds}s'
           : 'Connecting APRS...',
     AprsSessionState.available => 'APRS Server Available',
-    AprsSessionState.slow => 'APRS Server Connection Slow',
+    AprsSessionState.slow => 'APRS Connection Slow',
     AprsSessionState.notResponding => 'APRS Server Not Responding',
     AprsSessionState.unavailable => 'APRS Server Unavailable',
   };
@@ -136,13 +163,87 @@ final class AprsSessionController extends ChangeNotifier {
     _ageTimer = null;
   }
 
+  void _cancelReceiveTimers() {
+    _receiveFailureTimer?.cancel();
+    _receiveFailureTimer = null;
+    _receiveHideTimer?.cancel();
+    _receiveHideTimer = null;
+    _receiveCompletedTimer?.cancel();
+    _receiveCompletedTimer = null;
+  }
+
+  void _clearReceiveState() {
+    _cancelReceiveTimers();
+    _messageReceiveState = AprsMessageReceiveState.hidden;
+    _messageReceivePeer = null;
+    _receiveTimeoutSlow = false;
+  }
+
+  void _observeFragmentActivity() {
+    if (!_active) return;
+    _receiveCompletedTimer?.cancel();
+    _receiveCompletedTimer = null;
+    _messageReceiveState = AprsMessageReceiveState.receiving;
+    _messageReceivePeer = null;
+
+    if (_receiveTimeoutSlow) {
+      _receiveTimeoutSlow = false;
+      _responseHealthOverride = AprsSessionState.available;
+    }
+
+    _receiveFailureTimer?.cancel();
+    _receiveHideTimer?.cancel();
+    _receiveFailureTimer = Timer(receiveFailureDelay, () {
+      if (!_active || _disposed) return;
+      _messageReceiveState = AprsMessageReceiveState.failed;
+      _notify();
+    });
+    _receiveHideTimer = Timer(receiveHideDelay, () {
+      if (!_active || _disposed) return;
+      _messageReceiveState = AprsMessageReceiveState.hidden;
+      _messageReceivePeer = null;
+      _receiveTimeoutSlow = true;
+      _responseHealthOverride = AprsSessionState.slow;
+      _notify();
+    });
+  }
+
+  void _completeMessageReceive(OpenQspMessage message) {
+    _receiveFailureTimer?.cancel();
+    _receiveFailureTimer = null;
+    _receiveHideTimer?.cancel();
+    _receiveHideTimer = null;
+    _receiveCompletedTimer?.cancel();
+    _messageReceiveState = AprsMessageReceiveState.completed;
+    _messageReceivePeer = message.author;
+    _receiveCompletedTimer = Timer(receiveCompletedVisibleDuration, () {
+      if (_disposed) return;
+      _messageReceiveState = AprsMessageReceiveState.hidden;
+      _messageReceivePeer = null;
+      _receiveCompletedTimer = null;
+      _notify();
+    });
+  }
+
+  void _finishNonMessageFrame() {
+    if (_messageReceiveState != AprsMessageReceiveState.receiving) return;
+    _receiveFailureTimer?.cancel();
+    _receiveFailureTimer = null;
+    _receiveHideTimer?.cancel();
+    _receiveHideTimer = null;
+    _messageReceiveState = AprsMessageReceiveState.hidden;
+    _messageReceivePeer = null;
+  }
+
   Future<void> activate() async {
     _active = true;
     _activityState = AprsActivityState.idle;
+    _clearReceiveState();
     _responseHealthOverride = null;
     _serverCapabilities = 0;
     _capabilitiesCheckStartedAt = null;
     _lastObservedFramesRx = tncController.openQspFramesRx;
+    _lastObservedFragmentsRx = tncController.openQspFragmentsRx;
     _startAgeTimer();
     _notify();
 
@@ -170,10 +271,12 @@ final class AprsSessionController extends ChangeNotifier {
   Future<void> deactivate() async {
     _active = false;
     _activityState = AprsActivityState.idle;
+    _clearReceiveState();
     _responseHealthOverride = null;
     _serverCapabilities = 0;
     _capabilitiesCheckStartedAt = null;
     _lastObservedFramesRx = tncController.openQspFramesRx;
+    _lastObservedFragmentsRx = tncController.openQspFragmentsRx;
     _recentMessages.clear();
     _stopAgeTimer();
     _notify();
@@ -195,6 +298,12 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _onTncChanged() {
+    final fragmentsRx = tncController.openQspFragmentsRx;
+    if (fragmentsRx != _lastObservedFragmentsRx) {
+      _lastObservedFragmentsRx = fragmentsRx;
+      _observeFragmentActivity();
+    }
+
     final framesRx = tncController.openQspFramesRx;
     final object = tncController.lastOpenQspObject;
     if (object != null && framesRx != _lastObservedFramesRx) {
@@ -204,13 +313,15 @@ final class AprsSessionController extends ChangeNotifier {
         case OpenQspMessage():
           _rememberMessage(object);
           _activityState = AprsActivityState.newMessageReceived;
+          _completeMessageReceive(object);
         case OpenQspEnd(:final requestOperation, :final returnedCount)
             when requestOperation == OpenQspOperation.getNewMessages:
           _activityState = returnedCount == 0
               ? AprsActivityState.noNewMessages
               : AprsActivityState.newMessageReceived;
+          _finishNonMessageFrame();
         default:
-          break;
+          _finishNonMessageFrame();
       }
     }
     _notify();
@@ -248,6 +359,7 @@ final class AprsSessionController extends ChangeNotifier {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _clearReceiveState();
     _stopAgeTimer();
     tncController.removeListener(_onTncChanged);
     super.dispose();

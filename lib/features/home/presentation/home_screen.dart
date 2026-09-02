@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../../app/theme/openqsp_theme.dart';
 import '../../../core/network/server_status_client.dart';
 import '../../aprs/application/aprs_session_controller.dart';
+import '../../aprs/presentation/aprs_receive_indicator.dart';
 import '../../auth/application/auth_session.dart';
 import '../../auth/data/auth_client.dart';
 import '../../messages/application/messages_controller.dart';
@@ -237,6 +238,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => MessagesScreen(
+          aprsSession: session,
           controller: MessagesController(
             callsign: widget.callsign,
             token: '',
@@ -256,6 +258,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final aprsSession = widget.aprsSession;
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -276,7 +279,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             callsign: widget.callsign,
                             onEditCallsign: widget.onEditCallsign,
                             onOpenSettings: widget.onOpenSettings,
-                            aprsSession: widget.aprsSession,
+                            aprsSession: aprsSession,
                           ),
                           const SizedBox(height: 30),
                           Text(
@@ -287,6 +290,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           _CapabilityTile(
                             key: const Key('messagesTile'),
                             icon: Icons.mail_outline,
+                            status: aprsSession == null
+                                ? null
+                                : AprsReceiveIndicator(
+                                    session: aprsSession,
+                                    size: 18,
+                                  ),
                             title: 'Messages',
                             subtitle: 'Private messages',
                             onTap: _onMessagesTap,
@@ -307,7 +316,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               Padding(
                 padding: const EdgeInsets.only(top: 8, bottom: 24),
                 child: _TransportStatus(
-                  aprsSession: widget.aprsSession,
+                  aprsSession: aprsSession,
                   internetState: _serverState,
                   onInternetRetry: _checkServer,
                 ),
@@ -667,11 +676,13 @@ class _CapabilityTile extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.status,
   });
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback? onTap;
+  final Widget? status;
   @override
   Widget build(BuildContext context) => Material(
     color: OpenQspColors.surface,
@@ -686,7 +697,21 @@ class _CapabilityTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [
-            Icon(icon, color: OpenQspColors.brand),
+            SizedBox(
+              width: 30,
+              height: 30,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Icon(icon, color: OpenQspColors.brand),
+                  ),
+                  if (status != null)
+                    Positioned(right: -4, top: -6, child: status!),
+                ],
+              ),
+            ),
             const SizedBox(width: 16),
             Expanded(
               child: Column(

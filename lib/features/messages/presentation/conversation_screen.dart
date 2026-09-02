@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../aprs/application/aprs_session_controller.dart';
+import '../../aprs/presentation/aprs_receive_indicator.dart';
 import '../application/messages_controller.dart';
 import '../domain/message_models.dart';
 import 'message_date_format.dart';
@@ -10,9 +12,11 @@ class ConversationScreen extends StatefulWidget {
     super.key,
     required this.controller,
     required this.remoteCallsign,
+    this.aprsSession,
   });
   final MessagesController controller;
   final String remoteCallsign;
+  final AprsSessionController? aprsSession;
 
   @override
   State<ConversationScreen> createState() => _ConversationScreenState();
@@ -213,9 +217,22 @@ class _ConversationScreenState extends State<ConversationScreen>
     final composerBytes = messageBodyUtf8Length(composerText);
     final composerFits = composerBytes <= maximumMessageLength;
     final canSend = !sending && composerText.isNotEmpty && composerFits;
+    final session = widget.aprsSession;
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.remoteCallsign),
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(widget.remoteCallsign),
+            if (session != null) ...[
+              const SizedBox(width: 10),
+              AprsReceiveIndicator(
+                session: session,
+                peer: widget.remoteCallsign,
+              ),
+            ],
+          ],
+        ),
         actions: [
           PopupMenuButton<String>(
             key: const Key('conversationMenu'),
