@@ -6,18 +6,31 @@ final class AprsParser {
   const AprsParser();
 
   /// Returns null only when [frame] is outside APRS's AX.25 UI/F0 envelope.
-  AprsPacket? parse(Ax25Frame frame) =>
-      _parseFrame(frame, allowThirdParty: true, igate: null);
+  AprsPacket? parse(Ax25Frame frame) => _parseFrame(
+        frame,
+        allowThirdParty: true,
+        igate: null,
+        thirdPartyRoute: const [],
+        rfPath: const [],
+      );
 
   AprsPacket? _parseFrame(
     Ax25Frame frame, {
     required bool allowThirdParty,
     required Ax25Address? igate,
+    required List<String> thirdPartyRoute,
+    required List<String> rfPath,
   }) {
     if (!frame.isUiFrame || frame.pid != 0xf0) return null;
     final bytes = frame.information;
     if (bytes.isEmpty) {
-      return AprsInvalid(frame, igate: igate, reason: 'empty information');
+      return AprsInvalid(
+        frame,
+        igate: igate,
+        thirdPartyRoute: thirdPartyRoute,
+        rfPath: rfPath,
+        reason: 'empty information',
+      );
     }
     if (bytes.first == 0x7d) {
       return allowThirdParty
@@ -25,6 +38,8 @@ final class AprsParser {
           : AprsInvalid(
               frame,
               igate: igate,
+              thirdPartyRoute: thirdPartyRoute,
+              rfPath: rfPath,
               reason: 'nested third-party packet',
             );
     }
@@ -32,6 +47,8 @@ final class AprsParser {
       return AprsUnknown(
         frame,
         igate: igate,
+        thirdPartyRoute: thirdPartyRoute,
+        rfPath: rfPath,
         typeIdentifier: _printable(bytes.first)
             ? String.fromCharCode(bytes.first)
             : '.',
@@ -39,12 +56,20 @@ final class AprsParser {
     }
     // ':' + exactly nine addressee bytes + ':' + at least one body byte.
     if (bytes.length < 12) {
-      return AprsInvalid(frame, igate: igate, reason: 'message is too short');
+      return AprsInvalid(
+        frame,
+        igate: igate,
+        thirdPartyRoute: thirdPartyRoute,
+        rfPath: rfPath,
+        reason: 'message is too short',
+      );
     }
     if (bytes[10] != 0x3a) {
       return AprsInvalid(
         frame,
         igate: igate,
+        thirdPartyRoute: thirdPartyRoute,
+        rfPath: rfPath,
         reason: 'missing message separator',
       );
     }
@@ -55,13 +80,21 @@ final class AprsParser {
       return AprsInvalid(
         frame,
         igate: igate,
+        thirdPartyRoute: thirdPartyRoute,
+        rfPath: rfPath,
         reason: 'message contains non-printable bytes',
       );
     }
     final paddedAddressee = String.fromCharCodes(addressBytes);
     final addressee = paddedAddressee.replaceFirst(RegExp(r' +$'), '');
     if (addressee.isEmpty || addressee.contains(' ')) {
-      return AprsInvalid(frame, igate: igate, reason: 'invalid addressee');
+      return AprsInvalid(
+        frame,
+        igate: igate,
+        thirdPartyRoute: thirdPartyRoute,
+        rfPath: rfPath,
+        reason: 'invalid addressee',
+      );
     }
     final body = String.fromCharCodes(bodyBytes);
     if (body.startsWith('ack')) {
@@ -70,12 +103,16 @@ final class AprsParser {
           ? AprsAck(
               frame,
               igate: igate,
+              thirdPartyRoute: thirdPartyRoute,
+              rfPath: rfPath,
               messageAddressee: addressee,
               messageId: id,
             )
           : AprsInvalid(
               frame,
               igate: igate,
+              thirdPartyRoute: thirdPartyRoute,
+              rfPath: rfPath,
               reason: 'invalid ACK message ID',
             );
     }
@@ -85,12 +122,16 @@ final class AprsParser {
           ? AprsReject(
               frame,
               igate: igate,
+              thirdPartyRoute: thirdPartyRoute,
+              rfPath: rfPath,
               messageAddressee: addressee,
               messageId: id,
             )
           : AprsInvalid(
               frame,
               igate: igate,
+              thirdPartyRoute: thirdPartyRoute,
+              rfPath: rfPath,
               reason: 'invalid REJ message ID',
             );
     }
@@ -100,17 +141,27 @@ final class AprsParser {
       return AprsTextMessage(
         frame,
         igate: igate,
+        thirdPartyRoute: thirdPartyRoute,
+        rfPath: rfPath,
         messageAddressee: addressee,
         text: body,
       );
     }
     final id = body.substring(marker + 1);
     if (!_validId(id)) {
-      return AprsInvalid(frame, igate: igate, reason: 'invalid message ID');
+      return AprsInvalid(
+        frame,
+        igate: igate,
+        thirdPartyRoute: thirdPartyRoute,
+        rfPath: rfPath,
+        reason: 'invalid message ID',
+      );
     }
     return AprsTextMessage(
       frame,
       igate: igate,
+      thirdPartyRoute: thirdPartyRoute,
+      rfPath: rfPath,
       messageAddressee: addressee,
       text: body.substring(0, marker),
       messageId: id,
@@ -174,6 +225,10 @@ final class AprsParser {
           logicalFrame,
           allowThirdParty: false,
           igate: outerFrame.source,
+          thirdPartyRoute: List<String>.unmodifiable(routeParts.skip(1)),
+          rfPath: List<String>.unmodifiable(
+            outerFrame.digipeaters.map((address) => address.pathText),
+          ),
         ) ??
         _invalidThirdParty(outerFrame, 'invalid third-party payload');
   }
