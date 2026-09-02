@@ -1,4 +1,5 @@
 import '../domain/message_models.dart';
+export '../domain/message_models.dart' show RealtimeConnectionState;
 
 class MessagesAuthenticationException implements Exception {
   const MessagesAuthenticationException();
