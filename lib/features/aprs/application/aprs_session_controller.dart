@@ -45,7 +45,7 @@ final class AprsSessionController extends ChangeNotifier {
     }
     tncController.addListener(_onTncChanged);
     _lastObservedFramesRx = tncController.openQspFramesRx;
-    _lastObservedFragmentsRx = tncController.openQspFragmentsRx;
+    _lastObservedMessageFragmentsRx = tncController.openQspMessageFragmentsRx;
   }
 
   final TncSettingsController tncController;
@@ -66,7 +66,8 @@ final class AprsSessionController extends ChangeNotifier {
   bool _receiveIndicatorVisible = false;
   String? _messageReceivePeer;
   int _lastObservedFramesRx = 0;
-  int _lastObservedFragmentsRx = 0;
+  int _lastObservedMessageFragmentsRx = 0;
+  int _messageCursor = 0;
   DateTime? _capabilitiesCheckStartedAt;
   AprsSessionState? _responseHealthOverride;
   bool _receiveTimeoutSlow = false;
@@ -156,6 +157,15 @@ final class AprsSessionController extends ChangeNotifier {
       _clearReceiveState();
     }
     _notify();
+  }
+
+  void setMessageCursor(int value) {
+    if (value < 0 || value > 0xffffffff || value <= _messageCursor) return;
+    _messageCursor = value;
+    if (tncController.lastOpenQspMessageFragmentSequence case final sequence?
+        when sequence <= _messageCursor) {
+      _finishNonMessageFrame();
+    }
   }
 
   void _startAgeTimer() {
@@ -283,7 +293,7 @@ final class AprsSessionController extends ChangeNotifier {
     _serverCapabilities = 0;
     _capabilitiesCheckStartedAt = null;
     _lastObservedFramesRx = tncController.openQspFramesRx;
-    _lastObservedFragmentsRx = tncController.openQspFragmentsRx;
+    _lastObservedMessageFragmentsRx = tncController.openQspMessageFragmentsRx;
     _startAgeTimer();
     _notify();
 
@@ -316,7 +326,8 @@ final class AprsSessionController extends ChangeNotifier {
     _serverCapabilities = 0;
     _capabilitiesCheckStartedAt = null;
     _lastObservedFramesRx = tncController.openQspFramesRx;
-    _lastObservedFragmentsRx = tncController.openQspFragmentsRx;
+    _lastObservedMessageFragmentsRx = tncController.openQspMessageFragmentsRx;
+    _messageCursor = 0;
     _recentMessages.clear();
     _stopAgeTimer();
     _notify();
@@ -324,24 +335,28 @@ final class AprsSessionController extends ChangeNotifier {
     _notify();
   }
 
-  void _rememberMessage(OpenQspMessage message) {
+  bool _rememberMessage(OpenQspMessage message) {
     final duplicate = _recentMessages.any(
       (existing) =>
           existing.recipient == message.recipient &&
           existing.sequence == message.sequence,
     );
-    if (duplicate) return;
+    if (duplicate) return false;
     _recentMessages.add(message);
     if (_recentMessages.length > _recentMessageLimit) {
       _recentMessages.removeAt(0);
     }
+    return true;
   }
 
   void _onTncChanged() {
-    final fragmentsRx = tncController.openQspFragmentsRx;
-    if (fragmentsRx != _lastObservedFragmentsRx) {
-      _lastObservedFragmentsRx = fragmentsRx;
-      _observeFragmentActivity();
+    final messageFragmentsRx = tncController.openQspMessageFragmentsRx;
+    if (messageFragmentsRx != _lastObservedMessageFragmentsRx) {
+      _lastObservedMessageFragmentsRx = messageFragmentsRx;
+      final sequence = tncController.lastOpenQspMessageFragmentSequence;
+      if (sequence != null && sequence > _messageCursor) {
+        _observeFragmentActivity();
+      }
     }
 
     final framesRx = tncController.openQspFramesRx;
@@ -350,10 +365,15 @@ final class AprsSessionController extends ChangeNotifier {
       _lastObservedFramesRx = framesRx;
       _observeServerResponse(object);
       switch (object) {
-        case OpenQspMessage():
-          _rememberMessage(object);
-          _activityState = AprsActivityState.newMessageReceived;
-          _completeMessageReceive(object);
+        case OpenQspMessage(:final sequence):
+          final isNew = sequence > _messageCursor && _rememberMessage(object);
+          if (sequence > _messageCursor) _messageCursor = sequence;
+          if (isNew) {
+            _activityState = AprsActivityState.newMessageReceived;
+            _completeMessageReceive(object);
+          } else {
+            _finishNonMessageFrame();
+          }
         case OpenQspEnd(:final requestOperation, :final returnedCount)
             when requestOperation == OpenQspOperation.getNewMessages:
           _activityState = returnedCount == 0
