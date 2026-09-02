@@ -38,10 +38,12 @@ final class AprsSessionController extends ChangeNotifier {
     this.receiveFailureDelay = const Duration(minutes: 1),
     this.receiveHideDelay = const Duration(minutes: 2),
     this.receiveCompletedVisibleDuration = const Duration(seconds: 5),
+    this.receiveIndicatorDelay = const Duration(milliseconds: 300),
   }) {
     if (receiveFailureDelay <= Duration.zero ||
         receiveHideDelay <= receiveFailureDelay ||
-        receiveCompletedVisibleDuration <= Duration.zero) {
+        receiveCompletedVisibleDuration <= Duration.zero ||
+        receiveIndicatorDelay <= Duration.zero) {
       throw ArgumentError(
         'receive delays must be positive and hide delay must exceed failure delay',
       );
@@ -56,9 +58,11 @@ final class AprsSessionController extends ChangeNotifier {
   final Duration receiveFailureDelay;
   final Duration receiveHideDelay;
   final Duration receiveCompletedVisibleDuration;
+  final Duration receiveIndicatorDelay;
   bool _active = false;
   bool _disposed = false;
   Timer? _ageTimer;
+  Timer? _receiveIndicatorTimer;
   Timer? _receiveFailureTimer;
   Timer? _receiveHideTimer;
   Timer? _receiveCompletedTimer;
@@ -165,6 +169,8 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _cancelReceiveTimers() {
+    _receiveIndicatorTimer?.cancel();
+    _receiveIndicatorTimer = null;
     _receiveFailureTimer?.cancel();
     _receiveFailureTimer = null;
     _receiveHideTimer?.cancel();
@@ -193,7 +199,6 @@ final class AprsSessionController extends ChangeNotifier {
 
     _receiveCompletedTimer?.cancel();
     _receiveCompletedTimer = null;
-    _messageReceiveState = AprsMessageReceiveState.receiving;
     _messageReceivePeer = null;
 
     if (_receiveTimeoutSlow) {
@@ -201,15 +206,37 @@ final class AprsSessionController extends ChangeNotifier {
       _responseHealthOverride = AprsSessionState.available;
     }
 
+    // Do not flash the receive icon for one-fragment control responses such as
+    // CAPABILITIES or END returned=0. Give the Core decoder a short chance to
+    // finish the frame first. A real multi-fragment receive remains open long
+    // enough for this timer to make the indicator visible.
+    if (_messageReceiveState == AprsMessageReceiveState.failed) {
+      _receiveIndicatorTimer?.cancel();
+      _receiveIndicatorTimer = null;
+      _messageReceiveState = AprsMessageReceiveState.receiving;
+    } else if (_messageReceiveState == AprsMessageReceiveState.hidden &&
+        _receiveIndicatorTimer == null) {
+      _receiveIndicatorTimer = Timer(receiveIndicatorDelay, () {
+        _receiveIndicatorTimer = null;
+        if (!_active || _disposed) return;
+        _messageReceiveState = AprsMessageReceiveState.receiving;
+        _notify();
+      });
+    }
+
     _receiveFailureTimer?.cancel();
     _receiveHideTimer?.cancel();
     _receiveFailureTimer = Timer(receiveFailureDelay, () {
       if (!_active || _disposed) return;
+      _receiveIndicatorTimer?.cancel();
+      _receiveIndicatorTimer = null;
       _messageReceiveState = AprsMessageReceiveState.failed;
       _notify();
     });
     _receiveHideTimer = Timer(receiveHideDelay, () {
       if (!_active || _disposed) return;
+      _receiveIndicatorTimer?.cancel();
+      _receiveIndicatorTimer = null;
       _messageReceiveState = AprsMessageReceiveState.hidden;
       _messageReceivePeer = null;
       _receiveTimeoutSlow = true;
@@ -219,6 +246,8 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _completeMessageReceive(OpenQspMessage message) {
+    _receiveIndicatorTimer?.cancel();
+    _receiveIndicatorTimer = null;
     _receiveFailureTimer?.cancel();
     _receiveFailureTimer = null;
     _receiveHideTimer?.cancel();
@@ -236,7 +265,12 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _finishNonMessageFrame() {
-    if (_messageReceiveState != AprsMessageReceiveState.receiving) return;
+    if (_messageReceiveState != AprsMessageReceiveState.receiving &&
+        _receiveIndicatorTimer == null) {
+      return;
+    }
+    _receiveIndicatorTimer?.cancel();
+    _receiveIndicatorTimer = null;
     _receiveFailureTimer?.cancel();
     _receiveFailureTimer = null;
     _receiveHideTimer?.cancel();
