@@ -241,7 +241,12 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
           _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
         );
       }
-      return true;
+      // Keep the duplicate out of the burst state machine, but let the raw
+      // APRS frame continue downstream so the traffic monitor can show the
+      // exact IGate/APRS/RF path that caused this recovery ACK. The upper
+      // OpenQSP decoder has its own completed-transaction cache, so this does
+      // not re-deliver the message to application consumers.
+      return false;
     }
 
     var burst = _receivedBursts[key];
@@ -338,34 +343,29 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     );
   }
 
-  static Ax25Address? _parseIdentity(String value) {
-    final match = RegExp(r'^([A-Z0-9]{1,6})(?:-(\d{1,2}))?$').firstMatch(value);
-    if (match == null) return null;
-    final ssid = int.tryParse(match.group(2) ?? '0');
-    if (ssid == null || ssid < 0 || ssid > 15) return null;
-    return Ax25Address(
-      callsign: match.group(1)!,
-      ssid: ssid,
-      hasBeenRepeated: false,
-      isLast: true,
-    );
-  }
-
   void _expireCaches(DateTime now) {
     _sentBursts.removeWhere(
       (_, burst) => now.difference(burst.lastSeen) >= cacheTtl,
     );
-    _completedReceived.removeWhere(
-      (_, completed) => now.difference(completed) >= completedCacheTtl,
-    );
-    final expired = <String>[];
+    final expiredReceived = <String>[];
     for (final entry in _receivedBursts.entries) {
       if (now.difference(entry.value.lastSeen) >= cacheTtl) {
-        expired.add(entry.key);
+        entry.value.timer?.cancel();
+        expiredReceived.add(entry.key);
       }
     }
-    for (final key in expired) {
-      _receivedBursts.remove(key)?.timer?.cancel();
+    for (final key in expiredReceived) {
+      _receivedBursts.remove(key);
+    }
+    final expiredCompleted = <String>[];
+    for (final entry in _completedReceived.entries) {
+      if (now.difference(entry.value) >= completedCacheTtl) {
+        expiredCompleted.add(entry.key);
+      }
+    }
+    for (final key in expiredCompleted) {
+      _completedReceived.remove(key);
+      _completedAckTimers.remove(key)?.cancel();
     }
   }
 
@@ -380,107 +380,34 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     _completedReceived.clear();
     _completedAckTimers.clear();
   }
-}
 
-sealed class OpenQspBurstControl {
-  const OpenQspBurstControl(this.transactionId);
-  final String transactionId;
-}
-
-final class OpenQspBurstAck extends OpenQspBurstControl {
-  const OpenQspBurstAck(super.transactionId);
-}
-
-final class OpenQspBurstMissing extends OpenQspBurstControl {
-  const OpenQspBurstMissing(super.transactionId, this.missing);
-  final Set<int> missing;
-}
-
-String? parseOpenQspStoredControl(String body) {
-  if (!body.startsWith('S2')) return null;
-  try {
-    final payload = decodeOpenQspBase91(body.substring(2));
-    if (payload.length != 1) return null;
-    return encodeBase36(payload[0], 3);
-  } on Object {
-    return null;
-  }
-}
-
-OpenQspBurstControl? parseOpenQspBurstControl(String body) {
-  if (body.startsWith('A2')) {
-    try {
-      final payload = decodeOpenQspBase91(body.substring(2));
-      if (payload.length != 1) return null;
-      return OpenQspBurstAck(encodeBase36(payload[0], 3));
-    } on Object {
-      return null;
-    }
-  }
-  if (body.startsWith('N2')) {
-    try {
-      final payload = decodeOpenQspBase91(body.substring(2));
-      if (payload.length != 3) return null;
-      final mask = (payload[1] << 8) | payload[2];
-      if (mask == 0) return null;
-      return OpenQspBurstMissing(encodeBase36(payload[0], 3), {
-        for (var index = 0; index < 16; index++)
-          if ((mask & (1 << index)) != 0) index,
-      });
-    } on Object {
-      return null;
-    }
-  }
-
-  final ack = RegExp(r'^Q1A:([0-9A-Z]{3})$').firstMatch(body);
-  if (ack != null) return OpenQspBurstAck(ack.group(1)!);
-  final nack = RegExp(r'^Q1N:([0-9A-Z]{3}):([0-9A-F]{4})$').firstMatch(body);
-  if (nack == null) return null;
-  final mask = int.parse(nack.group(2)!, radix: 16);
-  if (mask == 0) return null;
-  return OpenQspBurstMissing(nack.group(1)!, {
-    for (var index = 0; index < 16; index++)
-      if ((mask & (1 << index)) != 0) index,
-  });
-}
-
-String encodeOpenQspBurstAck(String transactionId) {
-  final transaction = _validateQ2TransactionId(transactionId);
-  return 'A2${encodeOpenQspBase91([transaction])}';
-}
-
-String encodeOpenQspBurstMissing(String transactionId, Set<int> missing) {
-  final transaction = _validateQ2TransactionId(transactionId);
-  var mask = 0;
-  for (final index in missing) {
-    if (index < 0 || index >= openQspAprsMaxFragments) {
-      throw ArgumentError.value(index, 'missing', 'fragment index out of range');
-    }
-    mask |= 1 << index;
-  }
-  if (mask == 0) {
-    throw ArgumentError.value(missing, 'missing', 'must not be empty');
-  }
-  return 'N2${encodeOpenQspBase91([transaction, mask >> 8, mask & 0xff])}';
-}
-
-int _validateQ2TransactionId(String value) {
-  if (!RegExp(r'^[0-9A-Z]{3}$').hasMatch(value)) {
-    throw ArgumentError.value(
-      value,
-      'transactionId',
-      'must be 3 uppercase base36 characters',
+  Ax25Address? _parseIdentity(String value) {
+    final match = RegExp(r'^([A-Z0-9]{1,6})(?:-(\d{1,2}))?$').firstMatch(value);
+    if (match == null) return null;
+    final ssid = int.tryParse(match.group(2) ?? '0');
+    if (ssid == null || ssid < 0 || ssid > 15) return null;
+    return Ax25Address(
+      callsign: match.group(1)!,
+      ssid: ssid,
+      hasBeenRepeated: false,
+      isLast: true,
     );
   }
-  final decoded = decodeBase36(value, 3);
-  if (decoded > 0xff) {
-    throw ArgumentError.value(value, 'transactionId', 'must fit in 8 bits for Q2');
+
+  @override
+  Future<void> close() async {
+    _clearReceiveState();
+    _sentBursts.clear();
+    await _incomingFrameSubscription.cancel();
+    await _delegateBytesSubscription.cancel();
+    await _incoming.close();
+    await _incomingDecoder.close();
   }
-  return decoded;
 }
 
 final class _SentBurst {
   _SentBurst(this.total, this.lastSeen);
+
   final int total;
   DateTime lastSeen;
   final Map<int, List<int>> fragments = {};
