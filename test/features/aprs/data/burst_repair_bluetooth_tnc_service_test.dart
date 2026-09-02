@@ -71,6 +71,40 @@ void main() {
     await subscription.cancel();
   });
 
+  test('silent outbound Q2 burst retries then stops when A2 arrives', () async {
+    final delegate = _FakeBluetoothTncService();
+    final link = BurstRepairBluetoothTncService(
+      delegate,
+      repairRetryInterval: const Duration(milliseconds: 10),
+      silentRetryTtl: const Duration(milliseconds: 50),
+    );
+    final subscription = link.incomingBytes.listen((_) {});
+    final packet = _kissMessage(
+      source: 'EA3GNU',
+      addressee: openQspAprsAddressee,
+      body: _q2('009', 0, 1, [1]).body,
+    );
+
+    await link.sendBytes(packet);
+    expect(delegate.sent, hasLength(1));
+
+    await Future<void>.delayed(const Duration(milliseconds: 15));
+    expect(delegate.sent, hasLength(2));
+
+    delegate.emit(
+      _kissMessage(
+        source: openQspAprsAddressee,
+        addressee: 'EA3GNU',
+        body: encodeOpenQspBurstAck('009'),
+      ),
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+
+    expect(delegate.sent, hasLength(2));
+    await subscription.cancel();
+    await link.close();
+  });
+
   test('incomplete server Q2 burst emits N2 after quiet period', () async {
     final delegate = _FakeBluetoothTncService();
     final link = BurstRepairBluetoothTncService(
