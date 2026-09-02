@@ -2,12 +2,20 @@ import 'package:flutter/material.dart';
 
 import '../../../core/openqsp_protocol/openqsp_models.dart';
 import '../application/tnc_settings_controller.dart';
+import '../data/aprs_path_storage.dart';
+import '../domain/aprs_path.dart';
 import '../domain/tnc_connection_state.dart';
 import '../domain/tnc_device.dart';
 
 class TncSettingsSection extends StatefulWidget {
-  const TncSettingsSection({super.key, required this.controller});
+  const TncSettingsSection({
+    super.key,
+    required this.controller,
+    this.aprsPathStorage,
+  });
+
   final TncSettingsController controller;
+  final AprsPathStorage? aprsPathStorage;
 
   @override
   State<TncSettingsSection> createState() => _TncSettingsSectionState();
@@ -15,12 +23,31 @@ class TncSettingsSection extends StatefulWidget {
 
 class _TncSettingsSectionState extends State<TncSettingsSection> {
   TncSettingsController get controller => widget.controller;
+  late final AprsPathStorage _aprsPathStorage;
+  AprsPathMode _aprsPathMode = AprsPathMode.oneHop;
+  bool _aprsPathLoaded = false;
 
   @override
   void initState() {
     super.initState();
+    _aprsPathStorage = widget.aprsPathStorage ?? PreferencesAprsPathStorage();
     controller.addListener(_refresh);
     controller.initialize();
+    _loadAprsPath();
+  }
+
+  Future<void> _loadAprsPath() async {
+    final mode = await _aprsPathStorage.read();
+    if (!mounted) return;
+    setState(() {
+      _aprsPathMode = mode;
+      _aprsPathLoaded = true;
+    });
+  }
+
+  Future<void> _setAprsPath(AprsPathMode mode) async {
+    setState(() => _aprsPathMode = mode);
+    await _aprsPathStorage.write(mode);
   }
 
   void _refresh() {
@@ -117,6 +144,32 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                     for (var value = 0; value <= 15; value++)
                       DropdownMenuItem(value: value, child: Text('$value')),
                   ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(width: 105, child: Text('Path APRS:')),
+                Expanded(
+                  child: DropdownButton<AprsPathMode>(
+                    key: const Key('aprsPath'),
+                    isExpanded: true,
+                    value: _aprsPathMode,
+                    onChanged: !_aprsPathLoaded
+                        ? null
+                        : (value) {
+                            if (value != null) _setAprsPath(value);
+                          },
+                    items: AprsPathMode.values
+                        .map(
+                          (mode) => DropdownMenuItem(
+                            value: mode,
+                            child: Text('${mode.label} (${mode.pathLabel})'),
+                          ),
+                        )
+                        .toList(),
+                  ),
                 ),
               ],
             ),
