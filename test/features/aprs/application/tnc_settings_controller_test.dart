@@ -414,7 +414,7 @@ void main() {
     expect(controller.openQspCheckState, OpenQspCheckState.waiting);
   });
 
-  test('checkOpenQsp emits Core through Q1, APRS, AX.25 and KISS', () async {
+  test('checkOpenQsp emits Core through Q2, APRS, AX.25 and KISS', () async {
     storage.value = device;
     await controller.initialize();
     await controller.setAprsSsid(5);
@@ -434,7 +434,7 @@ void main() {
     expect(ax25.destination.callsign, openQspAprsTocall);
     expect(ax25.source.toString(), 'EA3GNU-5');
     expect(aprs.addressee, 'OQSP');
-    expect(aprs.text, 'Q1:000:00/01:AQUAAA');
+    expect(aprs.text, 'Q2!!=Y!!!');
     await kiss.close();
   });
 
