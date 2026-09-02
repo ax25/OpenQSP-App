@@ -6,6 +6,7 @@ import 'package:openqsp_app/features/aprs/aprs/aprs_packet.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_decoder.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_encoder.dart';
+import 'package:openqsp_app/features/aprs/ax25/ax25_frame.dart';
 import 'package:openqsp_app/features/aprs/data/aprs_path_bluetooth_tnc_service.dart';
 import 'package:openqsp_app/features/aprs/data/aprs_path_storage.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_service.dart';
@@ -97,7 +98,7 @@ List<int> _openQspKissFrame() {
   );
 }
 
-dynamic _decodeKissAx25(List<int> bytes) {
+Ax25Frame _decodeKissAx25(List<int> bytes) {
   final decoder = KissDecoder();
   KissFrame? frame;
   final subscription = decoder.frames.listen((value) => frame ??= value);
