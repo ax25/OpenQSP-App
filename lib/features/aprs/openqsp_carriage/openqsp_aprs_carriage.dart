@@ -245,7 +245,14 @@ final class OpenQspAprsFragment {
   }
 }
 
+/// Default outbound fragmentation: compact APRS V2.
 List<OpenQspAprsFragment> fragmentFrame(
+  Uint8List frame,
+  String transactionId,
+) => fragmentFrameV2(frame, transactionId);
+
+/// Legacy Q1 fragmentation retained for compatibility tests/migration tools.
+List<OpenQspAprsFragment> fragmentFrameV1(
   Uint8List frame,
   String transactionId,
 ) {
