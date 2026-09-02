@@ -51,13 +51,22 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ServerConnectionState _serverState = ServerConnectionState.checking;
+  MessagesController? _messagesController;
+  bool? _messagesViaAprs;
+  bool _preparingInternetMessages = false;
 
   bool get _aprsActive => widget.aprsSession?.active ?? false;
+
+  int get _unreadConversationCount => _messagesController?.conversations
+          .where((conversation) => conversation.unreadCount > 0)
+          .length ??
+      0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    widget.aprsSession?.addListener(_onAprsSessionChanged);
     _checkServer();
   }
 
@@ -69,10 +78,44 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(HomeScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.callsign != widget.callsign &&
-        _serverState == ServerConnectionState.connected) {
-      _serverState = ServerConnectionState.available;
+    if (oldWidget.aprsSession != widget.aprsSession) {
+      oldWidget.aprsSession?.removeListener(_onAprsSessionChanged);
+      widget.aprsSession?.addListener(_onAprsSessionChanged);
     }
+    if (oldWidget.callsign != widget.callsign) {
+      _disposeMessagesController();
+      if (_serverState == ServerConnectionState.connected) {
+        _serverState = ServerConnectionState.available;
+      }
+      if (!_aprsActive) unawaited(_prepareInternetMessagesSilently());
+    }
+  }
+
+  void _onAprsSessionChanged() {
+    final controllerMode = _messagesViaAprs;
+    if (controllerMode != null && controllerMode != _aprsActive) {
+      _disposeMessagesController();
+    }
+    if (!_aprsActive &&
+        (_serverState == ServerConnectionState.available ||
+            _serverState == ServerConnectionState.connected)) {
+      unawaited(_prepareInternetMessagesSilently());
+    }
+  }
+
+  void _messagesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _disposeMessagesController() {
+    final controller = _messagesController;
+    if (controller == null) return;
+    controller
+      ..removeListener(_messagesChanged)
+      ..dispose();
+    _messagesController = null;
+    _messagesViaAprs = null;
+    if (mounted) setState(() {});
   }
 
   Future<void> _checkServer() async {
@@ -92,6 +135,102 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _serverState = ServerConnectionState.connected;
       }
     });
+    if (available) unawaited(_prepareInternetMessagesSilently());
+  }
+
+  Future<void> _prepareInternetMessagesSilently() async {
+    if (_preparingInternetMessages || _aprsActive || !mounted) return;
+    if (_messagesController != null && _messagesViaAprs == false) return;
+    if (_serverState == ServerConnectionState.unavailable ||
+        _serverState == ServerConnectionState.checking) {
+      return;
+    }
+    _preparingInternetMessages = true;
+    try {
+      final gate = await widget.authSession.authenticateStoredToken(
+        widget.callsign,
+      );
+      if (!mounted || _aprsActive) return;
+      switch (gate) {
+        case AuthGateResult.connected:
+          await _ensureInternetMessagesController();
+        case AuthGateResult.serverUnavailable:
+          setState(() => _serverState = ServerConnectionState.unavailable);
+        case AuthGateResult.needsPassword:
+          break;
+      }
+    } finally {
+      _preparingInternetMessages = false;
+    }
+  }
+
+  Future<MessagesController?> _ensureInternetMessagesController() async {
+    final current = _messagesController;
+    if (current != null &&
+        _messagesViaAprs == false &&
+        current.connectionState !=
+            RealtimeConnectionState.authenticationRequired) {
+      return current;
+    }
+    if (_aprsActive) return null;
+    final token = widget.authSession.tokenFor(widget.callsign);
+    if (token == null) return null;
+
+    _disposeMessagesController();
+    final controller = MessagesController(
+      callsign: widget.callsign,
+      token: token,
+      repository: SessionAwareMessagesRepository(
+        delegate: widget.messagesRepository,
+        onAuthenticationRequired: () =>
+            widget.authSession.invalidate(widget.callsign),
+      ),
+      realtime: widget.messagesRealtimeFactory(),
+      onAuthenticationRequired: () =>
+          widget.authSession.invalidate(widget.callsign),
+    );
+    _messagesController = controller;
+    _messagesViaAprs = false;
+    controller.addListener(_messagesChanged);
+    await controller.start();
+    if (!mounted || _aprsActive) {
+      if (identical(_messagesController, controller)) {
+        _disposeMessagesController();
+      }
+      return null;
+    }
+    return controller;
+  }
+
+  Future<MessagesController?> _ensureAprsMessagesController(
+    AprsSessionController session,
+  ) async {
+    final current = _messagesController;
+    if (current != null && _messagesViaAprs == true) return current;
+    if (!session.active || !session.serverReachable) return null;
+
+    _disposeMessagesController();
+    final transport = AprsMessagesTransport(
+      session: session,
+      callsign: widget.callsign,
+    );
+    final controller = MessagesController(
+      callsign: widget.callsign,
+      token: '',
+      repository: transport,
+      realtime: transport,
+    );
+    _messagesController = controller;
+    _messagesViaAprs = true;
+    controller.addListener(_messagesChanged);
+    await controller.start();
+    if (!mounted || !session.active) {
+      if (identical(_messagesController, controller)) {
+        _disposeMessagesController();
+      }
+      return null;
+    }
+    return controller;
   }
 
   Future<void> _onMessagesTap() async {
@@ -101,7 +240,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _showMessage(session?.statusLabel ?? 'APRS Server Unavailable');
         return;
       }
-      _openAprsMessages(session);
+      final controller = await _ensureAprsMessagesController(session);
+      if (!mounted || controller == null) return;
+      _openMessages(controller, aprsSession: session);
       return;
     }
     if (_serverState == ServerConnectionState.unavailable ||
@@ -115,7 +256,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     switch (gate) {
       case AuthGateResult.connected:
-        _openMessages();
+        final controller = await _ensureInternetMessagesController();
+        if (!mounted || controller == null) return;
+        _openMessages(controller);
         return;
       case AuthGateResult.serverUnavailable:
         setState(() => _serverState = ServerConnectionState.unavailable);
@@ -136,7 +279,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (!mounted) return;
       if (result is LoginSuccess) {
         setState(() => _serverState = ServerConnectionState.connected);
-        _openMessages();
+        final controller = await _ensureInternetMessagesController();
+        if (!mounted || controller == null) return;
+        _openMessages(controller);
         return;
       }
       final failure = (result as LoginError).failure;
@@ -208,43 +353,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ..showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _openMessages() {
-    setState(() => _serverState = ServerConnectionState.connected);
+  void _openMessages(
+    MessagesController controller, {
+    AprsSessionController? aprsSession,
+  }) {
+    if (aprsSession == null) {
+      setState(() => _serverState = ServerConnectionState.connected);
+    }
     Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => MessagesScreen(
-          controller: MessagesController(
-            callsign: widget.callsign,
-            token: widget.authSession.tokenFor(widget.callsign)!,
-            repository: SessionAwareMessagesRepository(
-              delegate: widget.messagesRepository,
-              onAuthenticationRequired: () =>
-                  widget.authSession.invalidate(widget.callsign),
-            ),
-            realtime: widget.messagesRealtimeFactory(),
-            onAuthenticationRequired: () =>
-                widget.authSession.invalidate(widget.callsign),
-          ),
-        ),
-      ),
-    );
-  }
-
-  void _openAprsMessages(AprsSessionController session) {
-    final transport = AprsMessagesTransport(
-      session: session,
-      callsign: widget.callsign,
-    );
-    Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => MessagesScreen(
-          aprsSession: session,
-          controller: MessagesController(
-            callsign: widget.callsign,
-            token: '',
-            repository: transport,
-            realtime: transport,
-          ),
+          controller: controller,
+          aprsSession: aprsSession,
+          manageControllerLifecycle: false,
         ),
       ),
     );
@@ -253,6 +374,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    widget.aprsSession?.removeListener(_onAprsSessionChanged);
+    final controller = _messagesController;
+    if (controller != null) {
+      controller
+        ..removeListener(_messagesChanged)
+        ..dispose();
+    }
     super.dispose();
   }
 
@@ -296,6 +424,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                     session: aprsSession,
                                     size: 18,
                                   ),
+                            badgeCount: _unreadConversationCount,
                             title: 'Messages',
                             subtitle: 'Private messages',
                             onTap: _onMessagesTap,
@@ -677,12 +806,14 @@ class _CapabilityTile extends StatelessWidget {
     required this.subtitle,
     required this.onTap,
     this.status,
+    this.badgeCount = 0,
   });
   final IconData icon;
   final String title;
   final String subtitle;
   final VoidCallback? onTap;
   final Widget? status;
+  final int badgeCount;
   @override
   Widget build(BuildContext context) => Material(
     color: OpenQspColors.surface,
@@ -731,6 +862,15 @@ class _CapabilityTile extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
+            if (badgeCount > 0) ...[
+              Badge(
+                key: Key('unreadBadge-$title'),
+                backgroundColor: Colors.red,
+                textColor: Colors.white,
+                label: Text('$badgeCount'),
+              ),
+              const SizedBox(width: 8),
+            ],
             const Icon(Icons.chevron_right),
           ],
         ),
