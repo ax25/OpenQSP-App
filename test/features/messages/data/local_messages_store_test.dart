@@ -56,7 +56,7 @@ void main() {
     expect(messages.single.deliveryStatus, MessageDeliveryStatus.delivered);
   });
 
-  test('storing canonical messages does not infer APRS cursor', () async {
+  test('APRS cursor is highest incoming sequence in local database', () async {
     final store = PreferencesLocalMessagesStore();
     await store.setCursor('EA3GNU', 'aprs', '5');
 
@@ -75,7 +75,27 @@ void main() {
       ),
     ]);
 
-    expect(await store.cursor('EA3GNU', 'aprs'), '5');
+    expect(await store.cursor('EA3GNU', 'aprs'), '8');
+  });
+
+  test('APRS cursor does not require old sequences to be contiguous', () async {
+    final store = PreferencesLocalMessagesStore();
+    await store.upsertAll('EA3GNU', [
+      _message(
+        id: _serverId('EA3GNU', 55),
+        from: 'EA3ABC',
+        to: 'EA3GNU',
+        body: '55',
+      ),
+      _message(
+        id: _serverId('EA3GNU', 58),
+        from: 'EA3ABC',
+        to: 'EA3GNU',
+        body: '58',
+      ),
+    ]);
+
+    expect(await store.cursor('EA3GNU', 'aprs'), '58');
   });
 }
 

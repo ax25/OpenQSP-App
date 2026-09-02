@@ -18,7 +18,6 @@ import '../../aprs/openqsp_carriage/openqsp_aprs_carriage.dart';
 import '../domain/message_models.dart';
 import 'messages_transport.dart';
 
-/// Message transport backed by the already-active APRS/KISS session.
 final class AprsMessagesTransport
     implements
         MessagesRepository,
@@ -69,8 +68,6 @@ final class AprsMessagesTransport
   bool get _serverReachable =>
       session.state == AprsSessionState.available ||
       session.state == AprsSessionState.slow;
-
-  bool get _messageReceptionInProgress => session.hasMessageReceiveIndicator;
 
   @override
   String get syncCursorKey => 'aprs';
@@ -275,8 +272,6 @@ final class AprsMessagesTransport
       return;
     }
 
-    // Legacy APRS ACK only proves that this transport packet reached the
-    // server. Durable SEND_MESSAGE confirmation still comes from STORED.
     pending.forgetAck(id);
     _setPendingStatus(pending, MessageDeliveryStatus.processing);
     pending.touch(responseTimeout, () => _timeoutPending(pending));
@@ -358,21 +353,6 @@ final class AprsMessagesTransport
   Future<SyncBatch> sync({required String token, String? cursor}) {
     final active = _syncInFlight;
     if (active != null) return active;
-
-    // Entering Messages normally starts an automatic GET_NEW_MESSAGES. If an
-    // OpenQSP frame is already arriving (including its 60-120 s recovery
-    // window, or the short completed indicator), do not inject a second radio
-    // request into the same half-duplex exchange. The incoming frame continues
-    // to be delivered through the realtime stream and the next later sync can
-    // use the unchanged cursor.
-    if (_messageReceptionInProgress) {
-      if (kDebugMode) {
-        debugPrint('APRS MESSAGES | skip sync: message reception in progress');
-      }
-      return Future<SyncBatch>.value(
-        SyncBatch(messages: const [], cursor: cursor ?? '0'),
-      );
-    }
 
     final future = _syncOne(cursor);
     _syncInFlight = future;
@@ -480,9 +460,7 @@ final class AprsMessagesTransport
       _pendingSends[message.id] = pending;
       _pendingStoredOrder.add(pending);
       final index = _messages.indexWhere((value) => value.id == message.id);
-      if (index < 0) {
-        _messages.add(message);
-      }
+      if (index < 0) _messages.add(message);
     }
     if (pending.stored) return;
     _setPendingStatus(pending, MessageDeliveryStatus.processing);

@@ -23,17 +23,19 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     this.repairDelay = const Duration(seconds: 5),
     this.finalFragmentRepairDelay = const Duration(seconds: 2),
     this.repairRetryInterval = const Duration(seconds: 15),
+    this.silentRetryTtl = const Duration(seconds: 65),
     this.cacheTtl = openQspAprsDefaultTtl,
     this.completedCacheTtl = const Duration(minutes: 10),
   }) {
     if (repairDelay <= Duration.zero ||
         finalFragmentRepairDelay <= Duration.zero ||
         repairRetryInterval <= Duration.zero ||
+        silentRetryTtl <= Duration.zero ||
         cacheTtl <= Duration.zero ||
         completedCacheTtl <= Duration.zero) {
       throw ArgumentError(
-        'repairDelay, finalFragmentRepairDelay, repairRetryInterval, cacheTtl '
-        'and completedCacheTtl must be positive',
+        'repairDelay, finalFragmentRepairDelay, repairRetryInterval, '
+        'silentRetryTtl, cacheTtl and completedCacheTtl must be positive',
       );
     }
     _incomingFrameSubscription = _incomingDecoder.frames.listen(_onIncomingFrame);
@@ -44,6 +46,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   final Duration repairDelay;
   final Duration finalFragmentRepairDelay;
   final Duration repairRetryInterval;
+  final Duration silentRetryTtl;
   final Duration cacheTtl;
   final Duration completedCacheTtl;
 
@@ -84,7 +87,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   @override
   Future<void> disconnect() async {
     _clearReceiveState();
-    _sentBursts.clear();
+    _clearSentState();
     await delegate.disconnect();
   }
 
@@ -109,13 +112,49 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       final now = DateTime.now().toUtc();
       var burst = _sentBursts[fragment.transactionId];
       if (burst == null || burst.total != fragment.total || fragment.index == 0) {
+        burst?.retryTimer?.cancel();
         burst = _SentBurst(fragment.total, now);
         _sentBursts[fragment.transactionId] = burst;
       }
       burst.fragments[fragment.index] = List<int>.unmodifiable(data);
       burst.lastSeen = now;
+      if (burst.fragments.length == burst.total) {
+        _armSilentRetry(fragment.transactionId, burst);
+      }
     } on Object {
       // Non-OpenQSP KISS traffic is transparent to the shim.
+    }
+  }
+
+  void _armSilentRetry(String transactionId, _SentBurst burst) {
+    burst.retryTimer?.cancel();
+    final now = DateTime.now().toUtc();
+    if (now.difference(burst.createdAt) >= silentRetryTtl) {
+      _sentBursts.remove(transactionId);
+      return;
+    }
+    burst.retryTimer = Timer(
+      repairRetryInterval,
+      () => unawaited(_retrySilentBurst(transactionId, burst)),
+    );
+  }
+
+  Future<void> _retrySilentBurst(String transactionId, _SentBurst burst) async {
+    if (!identical(_sentBursts[transactionId], burst)) return;
+    burst.retryTimer = null;
+    final now = DateTime.now().toUtc();
+    if (now.difference(burst.createdAt) >= silentRetryTtl) {
+      _sentBursts.remove(transactionId);
+      return;
+    }
+    _debugTx('TX retry complete burst (transaction $transactionId)');
+    for (var index = 0; index < burst.total; index++) {
+      final bytes = burst.fragments[index];
+      if (bytes != null) await delegate.sendBytes(bytes);
+    }
+    burst.lastSeen = DateTime.now().toUtc();
+    if (identical(_sentBursts[transactionId], burst)) {
+      _armSilentRetry(transactionId, burst);
     }
   }
 
@@ -137,6 +176,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
         if (aprs is AprsTextMessage && _isFromOpenQsp(aprs)) {
           final storedTransaction = parseOpenQspStoredControl(aprs.text);
           if (storedTransaction != null) {
+            _removeSentBurst(storedTransaction);
             _forwardCompactStored(aprs, storedTransaction);
             return;
           }
@@ -162,10 +202,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     String transactionId,
   ) {
     final transaction = decodeBase36(transactionId, 3);
-    // Core STORED is 01 44 00 00. Build a one-fragment Q2 envelope for
-    // downstream consumers. Preserve the logical third-party OpenQSP source
-    // and destination rather than the outer RF/IGate AX.25 wrapper. This
-    // synthetic frame never goes on RF.
     final syntheticBody =
         'Q2${encodeOpenQspBase91([transaction, 0x00, 0x01, 0x44, 0x00, 0x00])}';
     final information = _messageEncoder.encode(
@@ -207,13 +243,23 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     );
   }
 
+  void _removeSentBurst(String transactionId) {
+    _sentBursts.remove(transactionId)?.retryTimer?.cancel();
+  }
+
+  void completeOutboundTransaction(String transactionId) {
+    _removeSentBurst(transactionId);
+  }
+
   void _handleControl(OpenQspBurstControl control) {
     switch (control) {
       case OpenQspBurstAck(:final transactionId):
-        _sentBursts.remove(transactionId);
+        _removeSentBurst(transactionId);
       case OpenQspBurstMissing(:final transactionId, :final missing):
         final burst = _sentBursts[transactionId];
         if (burst == null) return;
+        burst.retryTimer?.cancel();
+        burst.retryTimer = null;
         for (final index in missing) {
           final bytes = burst.fragments[index];
           if (bytes != null) {
@@ -236,17 +282,14 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 
     if (_completedReceived.containsKey(key)) {
       _debugBurst(fragment.transactionId, duplicate: true);
-      if (!_completedAckTimers.containsKey(key)) {
-        unawaited(
-          _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
-        );
-      }
-      // Keep the duplicate out of the burst state machine, but let the raw
-      // APRS frame continue downstream so the traffic monitor can show the
-      // exact IGate/APRS/RF path that caused this recovery ACK. The upper
-      // OpenQSP decoder has its own completed-transaction cache, so this does
-      // not re-deliver the message to application consumers.
-      return false;
+      _completedAckTimers.remove(key)?.cancel();
+      unawaited(
+        _sendControl(localIdentity, encodeOpenQspBurstAck(fragment.transactionId)),
+      );
+      // This transaction has already completed and has already been ACKed (or
+      // has an ACK in flight). Keep later RF/IGate copies below the application
+      // receive pipeline so they cannot re-arm the "receiving message" UI.
+      return true;
     }
 
     var burst = _receivedBursts[key];
@@ -270,6 +313,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
       _receivedBursts.remove(key);
       _completedReceived[key] = now;
       _debugBurst(fragment.transactionId, duplicate: false);
+      _cancelAllReceiveRepairState();
       _completedAckTimers[key]?.cancel();
       _completedAckTimers[key] = Timer(finalFragmentRepairDelay, () {
         _completedAckTimers.remove(key);
@@ -344,9 +388,16 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   }
 
   void _expireCaches(DateTime now) {
-    _sentBursts.removeWhere(
-      (_, burst) => now.difference(burst.lastSeen) >= cacheTtl,
-    );
+    final expiredSent = <String>[];
+    for (final entry in _sentBursts.entries) {
+      if (now.difference(entry.value.createdAt) >= silentRetryTtl) {
+        entry.value.retryTimer?.cancel();
+        expiredSent.add(entry.key);
+      }
+    }
+    for (final key in expiredSent) {
+      _sentBursts.remove(key);
+    }
     final expiredReceived = <String>[];
     for (final entry in _receivedBursts.entries) {
       if (now.difference(entry.value.lastSeen) >= cacheTtl) {
@@ -369,14 +420,25 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     }
   }
 
-  void _clearReceiveState() {
+  void _clearSentState() {
+    for (final burst in _sentBursts.values) {
+      burst.retryTimer?.cancel();
+    }
+    _sentBursts.clear();
+  }
+
+  void _cancelAllReceiveRepairState() {
     for (final burst in _receivedBursts.values) {
       burst.timer?.cancel();
     }
+    _receivedBursts.clear();
+  }
+
+  void _clearReceiveState() {
+    _cancelAllReceiveRepairState();
     for (final timer in _completedAckTimers.values) {
       timer.cancel();
     }
-    _receivedBursts.clear();
     _completedReceived.clear();
     _completedAckTimers.clear();
   }
@@ -397,7 +459,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   @override
   Future<void> close() async {
     _clearReceiveState();
-    _sentBursts.clear();
+    _clearSentState();
     await _incomingFrameSubscription.cancel();
     await _delegateBytesSubscription.cancel();
     await _incoming.close();
@@ -406,11 +468,15 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
 }
 
 final class _SentBurst {
-  _SentBurst(this.total, this.lastSeen);
+  _SentBurst(this.total, DateTime now)
+      : createdAt = now,
+        lastSeen = now;
 
   final int total;
+  final DateTime createdAt;
   DateTime lastSeen;
   final Map<int, List<int>> fragments = {};
+  Timer? retryTimer;
 }
 
 final class _ReceivedBurst {

@@ -8,6 +8,7 @@ import '../features/auth/data/auth_client.dart';
 import '../features/auth/data/auth_token_store.dart';
 import '../features/auth/presentation/server_password_dialog.dart';
 import '../features/aprs/application/aprs_session_controller.dart';
+import '../features/aprs/application/retrying_tnc_settings_controller.dart';
 import '../features/aprs/application/tnc_settings_controller.dart';
 import '../features/aprs/data/bluetooth_tnc_service.dart';
 import '../features/aprs/data/bluetooth_tnc_storage.dart';
@@ -70,7 +71,7 @@ class _OpenQspAppState extends State<OpenQspApp> {
 
   TncSettingsController _buildTncController(String callsign) =>
       widget.tncControllerFactory?.call() ??
-      TncSettingsController(
+      RetryingTncSettingsController(
         storage: PreferencesBluetoothTncStorage(),
         service: BurstRepairBluetoothTncService(AndroidBluetoothTncService()),
         sourceCallsign: callsign,

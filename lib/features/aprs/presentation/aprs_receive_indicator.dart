@@ -20,7 +20,7 @@ class AprsReceiveIndicator extends StatelessWidget {
       animation: session,
       builder: (context, _) {
         final state = session.messageReceiveState;
-        if (state == AprsMessageReceiveState.hidden) {
+        if (!session.showMessageReceiveIndicator) {
           return const SizedBox.shrink();
         }
 

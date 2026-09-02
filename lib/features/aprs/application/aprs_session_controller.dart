@@ -26,11 +26,6 @@ enum AprsActivityState {
 
 enum AprsMessageReceiveState { hidden, receiving, failed, completed }
 
-/// Owns the operational APRS mode independently from any presentation screen.
-///
-/// The underlying [TncSettingsController] remains the single owner of the
-/// Bluetooth/KISS/APRS/OpenQSP pipeline. This controller only decides when that
-/// pipeline should be active for the application.
 final class AprsSessionController extends ChangeNotifier {
   AprsSessionController({
     required this.tncController,
@@ -38,10 +33,12 @@ final class AprsSessionController extends ChangeNotifier {
     this.receiveFailureDelay = const Duration(minutes: 1),
     this.receiveHideDelay = const Duration(minutes: 2),
     this.receiveCompletedVisibleDuration = const Duration(seconds: 5),
+    this.receiveIndicatorDelay = const Duration(milliseconds: 300),
   }) {
     if (receiveFailureDelay <= Duration.zero ||
         receiveHideDelay <= receiveFailureDelay ||
-        receiveCompletedVisibleDuration <= Duration.zero) {
+        receiveCompletedVisibleDuration <= Duration.zero ||
+        receiveIndicatorDelay <= Duration.zero) {
       throw ArgumentError(
         'receive delays must be positive and hide delay must exceed failure delay',
       );
@@ -56,14 +53,17 @@ final class AprsSessionController extends ChangeNotifier {
   final Duration receiveFailureDelay;
   final Duration receiveHideDelay;
   final Duration receiveCompletedVisibleDuration;
+  final Duration receiveIndicatorDelay;
   bool _active = false;
   bool _disposed = false;
   Timer? _ageTimer;
+  Timer? _receiveIndicatorTimer;
   Timer? _receiveFailureTimer;
   Timer? _receiveHideTimer;
   Timer? _receiveCompletedTimer;
   AprsActivityState _activityState = AprsActivityState.idle;
   AprsMessageReceiveState _messageReceiveState = AprsMessageReceiveState.hidden;
+  bool _receiveIndicatorVisible = false;
   String? _messageReceivePeer;
   int _lastObservedFramesRx = 0;
   int _lastObservedFragmentsRx = 0;
@@ -80,14 +80,15 @@ final class AprsSessionController extends ChangeNotifier {
   String? get messageReceivePeer => _messageReceivePeer;
   bool get hasMessageReceiveIndicator =>
       _messageReceiveState != AprsMessageReceiveState.hidden;
+  bool get showMessageReceiveIndicator =>
+      _messageReceiveState != AprsMessageReceiveState.hidden &&
+      (_messageReceiveState != AprsMessageReceiveState.receiving ||
+          _receiveIndicatorVisible);
   String? get lastIgate => tncController.lastOpenQspIgate;
   DateTime? get lastServerRx => tncController.lastValidOpenQspRx;
   bool get serverReachable =>
       state == AprsSessionState.available || state == AprsSessionState.slow;
   int get serverCapabilities => _serverCapabilities;
-  // Q2 has transaction-level A2/N2 reliability plus STORED/S2 for durable
-  // SEND_MESSAGE completion. The legacy APRS message-ID commit ACK must never
-  // be enabled for Q2, even if an older server advertises that capability bit.
   bool get supportsAprsCommitAck => false;
   List<OpenQspMessage> get recentMessages => List.unmodifiable(_recentMessages);
 
@@ -151,6 +152,9 @@ final class AprsSessionController extends ChangeNotifier {
   void setActivity(AprsActivityState value) {
     if (_activityState == value) return;
     _activityState = value;
+    if (value == AprsActivityState.noNewMessages) {
+      _clearReceiveState();
+    }
     _notify();
   }
 
@@ -165,6 +169,8 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _cancelReceiveTimers() {
+    _receiveIndicatorTimer?.cancel();
+    _receiveIndicatorTimer = null;
     _receiveFailureTimer?.cancel();
     _receiveFailureTimer = null;
     _receiveHideTimer?.cancel();
@@ -176,24 +182,17 @@ final class AprsSessionController extends ChangeNotifier {
   void _clearReceiveState() {
     _cancelReceiveTimers();
     _messageReceiveState = AprsMessageReceiveState.hidden;
+    _receiveIndicatorVisible = false;
     _messageReceivePeer = null;
     _receiveTimeoutSlow = false;
   }
 
   void _observeFragmentActivity() {
     if (!_active) return;
-    // RF digipeaters can deliver additional copies of fragments after a full
-    // message has already completed. Those duplicates increment the fragment
-    // counter but do not produce another OpenQSP frame, so treating them as a
-    // fresh receive would eventually turn a successful receive into `failed`.
-    // Keep the completed result stable until its normal visibility timer hides
-    // it. A genuinely new complete message will still be handled below via
-    // [_completeMessageReceive].
     if (_messageReceiveState == AprsMessageReceiveState.completed) return;
 
     _receiveCompletedTimer?.cancel();
     _receiveCompletedTimer = null;
-    _messageReceiveState = AprsMessageReceiveState.receiving;
     _messageReceivePeer = null;
 
     if (_receiveTimeoutSlow) {
@@ -201,16 +200,37 @@ final class AprsSessionController extends ChangeNotifier {
       _responseHealthOverride = AprsSessionState.available;
     }
 
+    if (_messageReceiveState != AprsMessageReceiveState.receiving) {
+      _messageReceiveState = AprsMessageReceiveState.receiving;
+      _receiveIndicatorVisible = false;
+      _receiveIndicatorTimer?.cancel();
+      _receiveIndicatorTimer = Timer(receiveIndicatorDelay, () {
+        _receiveIndicatorTimer = null;
+        if (!_active || _disposed ||
+            _messageReceiveState != AprsMessageReceiveState.receiving) {
+          return;
+        }
+        _receiveIndicatorVisible = true;
+        _notify();
+      });
+    }
+
     _receiveFailureTimer?.cancel();
     _receiveHideTimer?.cancel();
     _receiveFailureTimer = Timer(receiveFailureDelay, () {
       if (!_active || _disposed) return;
+      _receiveIndicatorTimer?.cancel();
+      _receiveIndicatorTimer = null;
       _messageReceiveState = AprsMessageReceiveState.failed;
+      _receiveIndicatorVisible = true;
       _notify();
     });
     _receiveHideTimer = Timer(receiveHideDelay, () {
       if (!_active || _disposed) return;
+      _receiveIndicatorTimer?.cancel();
+      _receiveIndicatorTimer = null;
       _messageReceiveState = AprsMessageReceiveState.hidden;
+      _receiveIndicatorVisible = false;
       _messageReceivePeer = null;
       _receiveTimeoutSlow = true;
       _responseHealthOverride = AprsSessionState.slow;
@@ -219,16 +239,20 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _completeMessageReceive(OpenQspMessage message) {
+    _receiveIndicatorTimer?.cancel();
+    _receiveIndicatorTimer = null;
     _receiveFailureTimer?.cancel();
     _receiveFailureTimer = null;
     _receiveHideTimer?.cancel();
     _receiveHideTimer = null;
     _receiveCompletedTimer?.cancel();
     _messageReceiveState = AprsMessageReceiveState.completed;
+    _receiveIndicatorVisible = true;
     _messageReceivePeer = message.author;
     _receiveCompletedTimer = Timer(receiveCompletedVisibleDuration, () {
       if (_disposed) return;
       _messageReceiveState = AprsMessageReceiveState.hidden;
+      _receiveIndicatorVisible = false;
       _messageReceivePeer = null;
       _receiveCompletedTimer = null;
       _notify();
@@ -236,12 +260,18 @@ final class AprsSessionController extends ChangeNotifier {
   }
 
   void _finishNonMessageFrame() {
-    if (_messageReceiveState != AprsMessageReceiveState.receiving) return;
+    if (_messageReceiveState != AprsMessageReceiveState.receiving &&
+        _messageReceiveState != AprsMessageReceiveState.failed) {
+      return;
+    }
+    _receiveIndicatorTimer?.cancel();
+    _receiveIndicatorTimer = null;
     _receiveFailureTimer?.cancel();
     _receiveFailureTimer = null;
     _receiveHideTimer?.cancel();
     _receiveHideTimer = null;
     _messageReceiveState = AprsMessageReceiveState.hidden;
+    _receiveIndicatorVisible = false;
     _messageReceivePeer = null;
   }
 

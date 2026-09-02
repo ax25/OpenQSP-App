@@ -10,7 +10,7 @@ void main() {
     SharedPreferences.setMockInitialValues(<String, Object>{});
   });
 
-  test('APRS cursor recovers only the contiguous local mailbox prefix', () async {
+  test('APRS cursor uses the highest local mailbox sequence', () async {
     final store = PreferencesLocalMessagesStore();
     await store.upsertAll('EA3GNU', [
       _message(1),
@@ -18,21 +18,21 @@ void main() {
       _message(4),
     ]);
 
-    expect(await store.cursor('EA3GNU', 'aprs'), '2');
+    expect(await store.cursor('EA3GNU', 'aprs'), '4');
     expect(await store.cursor('EA3GNU', 'internet'), isNull);
   });
 
-  test('APRS cursor does not skip a missing first mailbox message', () async {
+  test('APRS cursor may skip historical gaps in the local mailbox', () async {
     final store = PreferencesLocalMessagesStore();
     await store.upsertAll('EA3GNU', [
       _message(2),
       _message(3),
     ]);
 
-    expect(await store.cursor('EA3GNU', 'aprs'), isNull);
+    expect(await store.cursor('EA3GNU', 'aprs'), '3');
   });
 
-  test('APRS cursor advances beyond a stale persisted cursor', () async {
+  test('APRS cursor ignores a stale lower persisted cursor', () async {
     final store = PreferencesLocalMessagesStore();
     await store.setCursor('EA3GNU', 'aprs', '5');
     await store.upsertAll(
@@ -43,7 +43,7 @@ void main() {
     expect(await store.cursor('EA3GNU', 'aprs'), '10');
   });
 
-  test('APRS cursor advances only through the contiguous local prefix', () async {
+  test('APRS cursor uses latest local sequence despite historical gaps', () async {
     final store = PreferencesLocalMessagesStore();
     await store.setCursor('EA3GNU', 'aprs', '5');
     await store.upsertAll('EA3GNU', [
@@ -52,10 +52,10 @@ void main() {
       _message(10),
     ]);
 
-    expect(await store.cursor('EA3GNU', 'aprs'), '7');
+    expect(await store.cursor('EA3GNU', 'aprs'), '10');
   });
 
-  test('APRS cursor never regresses behind a newer persisted cursor', () async {
+  test('persisted APRS cursor cannot outrank the local database', () async {
     final store = PreferencesLocalMessagesStore();
     await store.setCursor('EA3GNU', 'aprs', '15');
     await store.upsertAll(
@@ -63,16 +63,16 @@ void main() {
       List.generate(10, (index) => _message(index + 1)),
     );
 
-    expect(await store.cursor('EA3GNU', 'aprs'), '15');
+    expect(await store.cursor('EA3GNU', 'aprs'), '10');
   });
 
-  test('late APRS cursor writes cannot move the persisted cursor backwards', () async {
+  test('APRS cursor is null when the local database has no received messages', () async {
     final store = PreferencesLocalMessagesStore();
 
     await store.setCursor('EA3GNU', 'aprs', '15');
     await store.setCursor('EA3GNU', 'aprs', '12');
 
-    expect(await store.cursor('EA3GNU', 'aprs'), '15');
+    expect(await store.cursor('EA3GNU', 'aprs'), isNull);
   });
 
   test('non-APRS cursor writes retain replacement semantics', () async {
