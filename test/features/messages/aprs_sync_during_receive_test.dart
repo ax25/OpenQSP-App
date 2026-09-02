@@ -71,7 +71,10 @@ void main() {
     await tnc.connect();
     tnc.openQspCheckState = OpenQspCheckState.available;
 
-    final session = AprsSessionController(tncController: tnc);
+    final session = AprsSessionController(
+      tncController: tnc,
+      receiveIndicatorDelay: const Duration(milliseconds: 1),
+    );
     await session.activate();
     tnc.openQspCheckState = OpenQspCheckState.available;
     service.sentBytes.clear();
@@ -115,7 +118,7 @@ void main() {
       kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
     );
     await Future<void>.delayed(Duration.zero);
-    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(const Duration(milliseconds: 2));
 
     expect(session.messageReceiveState, AprsMessageReceiveState.receiving);
 
