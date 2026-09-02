@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/core/openqsp_protocol/openqsp_codec.dart';
 import 'package:openqsp_app/core/openqsp_protocol/openqsp_models.dart';
+import 'package:openqsp_app/core/openqsp_protocol/openqsp_operation.dart';
 import 'package:openqsp_app/features/aprs/aprs/aprs_message_encoder.dart';
 import 'package:openqsp_app/features/aprs/application/aprs_session_controller.dart';
 import 'package:openqsp_app/features/aprs/application/tnc_settings_controller.dart';
@@ -59,7 +60,7 @@ class _FakeTncService implements BluetoothTncService {
 }
 
 void main() {
-  test('entering Messages does not send GET_NEW_MESSAGES during APRS reception', () async {
+  test('GET_NEW_MESSAGES is allowed while APRS receive indicator is active', () async {
     const device = TncDevice(id: '00:11:22:33:44:55', name: 'TNC');
     final service = _FakeTncService();
     final tnc = TncSettingsController(
@@ -95,31 +96,34 @@ void main() {
     final fragments = fragmentFrame(core, 'RX1');
     expect(fragments.length, greaterThan(1));
 
-    final information = messageEncoder.encode(
-      addressee: 'EA3GNU',
-      body: fragments.first.body,
-    );
-    final ax25 = ax25Encoder.encodeUi(
-      destination: const Ax25Address(
-        callsign: 'APOQSP',
-        ssid: 0,
-        hasBeenRepeated: false,
-        isLast: false,
-      ),
-      source: const Ax25Address(
-        callsign: 'OQSP',
-        ssid: 0,
-        hasBeenRepeated: false,
-        isLast: true,
-      ),
-      information: information,
-    );
-    service.bytes.add(
-      kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
-    );
+    void receive(OpenQspAprsFragment fragment) {
+      final information = messageEncoder.encode(
+        addressee: 'EA3GNU',
+        body: fragment.body,
+      );
+      final ax25 = ax25Encoder.encodeUi(
+        destination: const Ax25Address(
+          callsign: 'APOQSP',
+          ssid: 0,
+          hasBeenRepeated: false,
+          isLast: false,
+        ),
+        source: const Ax25Address(
+          callsign: 'OQSP',
+          ssid: 0,
+          hasBeenRepeated: false,
+          isLast: true,
+        ),
+        information: information,
+      );
+      service.bytes.add(
+        kissEncoder.encode(KissFrame(port: 0, command: 0, payload: ax25)),
+      );
+    }
+
+    receive(fragments.first);
     await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(const Duration(milliseconds: 2));
-
     expect(session.messageReceiveState, AprsMessageReceiveState.receiving);
 
     final transport = AprsMessagesTransport(
@@ -130,12 +134,27 @@ void main() {
     await transport.connect(callsign: 'EA3GNU', token: '');
     service.sentBytes.clear();
 
-    final batch = await transport.sync(token: '', cursor: '12');
+    final sync = transport.sync(token: '', cursor: '12');
+    await Future<void>.delayed(Duration.zero);
+    expect(service.sentBytes, isNotEmpty);
+
+    final end = codec.encode(
+      const OpenQspEnd(
+        requestOperation: OpenQspOperation.getNewMessages,
+        returnedCount: 0,
+        nextSince: 12,
+        hasMore: false,
+      ),
+    );
+    for (final fragment in fragmentFrame(end, 'END')) {
+      receive(fragment);
+    }
+    final batch = await sync;
 
     expect(batch.messages, isEmpty);
     expect(batch.cursor, '12');
     expect(batch.hasMore, isFalse);
-    expect(service.sentBytes, isEmpty);
+    expect(session.messageReceiveState, AprsMessageReceiveState.hidden);
 
     await transport.close();
     session.dispose();
