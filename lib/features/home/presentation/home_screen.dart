@@ -154,8 +154,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       switch (gate) {
         case AuthGateResult.connected:
           await _ensureInternetMessagesController();
+          break;
         case AuthGateResult.serverUnavailable:
           setState(() => _serverState = ServerConnectionState.unavailable);
+          break;
         case AuthGateResult.needsPassword:
           break;
       }
