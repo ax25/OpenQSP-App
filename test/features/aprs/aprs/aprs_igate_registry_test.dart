@@ -13,66 +13,78 @@ void main() {
     await registry.resetForTesting();
   });
 
-  test('starts with no forced iGate', () {
+  test('starts with no forced digipeater', () {
     expect(registry.knownIgates, isEmpty);
     expect(registry.forcedIgate, isNull);
     expect(registry.forcedPath, isEmpty);
   });
 
-  test('learns iGate from valid third-party APRS traffic', () {
+  test('learns concrete repeated digipeaters and ignores WIDE aliases', () {
     final frame = Ax25Frame(
       destination: const Ax25Address(
-        callsign: 'APLRG1',
+        callsign: 'OQSP',
         ssid: 0,
         hasBeenRepeated: false,
         isLast: false,
       ),
       source: const Ax25Address(
-        callsign: 'EA3IK',
-        ssid: 6,
+        callsign: 'EA3GNU',
+        ssid: 0,
         hasBeenRepeated: false,
-        isLast: true,
+        isLast: false,
       ),
-      digipeaters: const [],
+      digipeaters: const [
+        Ax25Address(
+          callsign: 'EB3EHJ',
+          ssid: 14,
+          hasBeenRepeated: true,
+          isLast: false,
+        ),
+        Ax25Address(
+          callsign: 'WIDE1',
+          ssid: 0,
+          hasBeenRepeated: true,
+          isLast: true,
+        ),
+      ],
       control: 0x03,
       pid: 0xf0,
-      information:
-          '}OQSP>APOQSP,TCPIP*,qAC,EA3IK-6::EA3GNU-5 :Q1:ABC:00/01:AUYABQEAAAAP{00'
-              .codeUnits,
+      information: ':OQSP     :Q2:069:00/05:AAAA'.codeUnits,
     );
 
     final packet = const AprsParser().parse(frame);
 
     expect(packet, isNotNull);
-    expect(registry.knownIgates, contains('EA3IK-6'));
+    expect(registry.knownIgates, contains('EB3EHJ-14'));
+    expect(registry.knownIgates, isNot(contains('WIDE1')));
   });
 
   test('forced selection exposes a one-station AX.25 path', () async {
-    registry.observe('EA3IK-6');
-    await registry.setForced('EA3IK-6');
+    registry.observe('ED3YAB-14');
+    await registry.setForced('ED3YAB-14');
 
-    expect(registry.forcedIgate, 'EA3IK-6');
+    expect(registry.forcedIgate, 'ED3YAB-14');
     expect(registry.forcedPath, hasLength(1));
-    expect(registry.forcedPath.single.callsign, 'EA3IK');
-    expect(registry.forcedPath.single.ssid, 6);
+    expect(registry.forcedPath.single.callsign, 'ED3YAB');
+    expect(registry.forcedPath.single.ssid, 14);
   });
 
-  test('known iGates and forced selection survive reload', () async {
-    registry.observe('EA3IK-6');
-    await registry.setForced('EA3IK-6');
+  test('known digipeaters and forced selection survive reload', () async {
+    registry.observe('EB3EHJ-14');
+    await registry.setForced('EB3EHJ-14');
 
     SharedPreferences.setMockInitialValues(<String, Object>{
-      'tnc.aprs.knownIgates': <String>['EA3IK-6', 'EA3ABC-10'],
-      'tnc.aprs.forcedIgate': 'EA3ABC-10',
+      'tnc.aprs.knownIgates': <String>['EB3EHJ-14', 'ED3YAB-14'],
+      'tnc.aprs.forcedIgate': 'ED3YAB-14',
     });
     await registry.resetForTesting();
     SharedPreferences.setMockInitialValues(<String, Object>{
-      'tnc.aprs.knownIgates': <String>['EA3IK-6', 'EA3ABC-10'],
-      'tnc.aprs.forcedIgate': 'EA3ABC-10',
+      'tnc.aprs.knownIgates': <String>['EB3EHJ-14', 'ED3YAB-14'],
+      'tnc.aprs.forcedIgate': 'ED3YAB-14',
     });
     await registry.load();
 
-    expect(registry.knownIgates, const ['EA3ABC-10', 'EA3IK-6']);
-    expect(registry.forcedIgate, 'EA3ABC-10');
+    expect(registry.knownIgates, const ['EB3EHJ-14', 'ED3YAB-14']);
+    expect(registry.forcedIgate, 'ED3YAB-14');
   });
 }
