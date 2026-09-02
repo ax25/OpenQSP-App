@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../application/messages_controller.dart';
 import '../domain/message_models.dart';
@@ -14,6 +15,8 @@ class MessagesScreen extends StatefulWidget {
 }
 
 class _MessagesScreenState extends State<MessagesScreen> {
+  bool _rebuildScheduled = false;
+
   @override
   void initState() {
     super.initState();
@@ -22,7 +25,17 @@ class _MessagesScreenState extends State<MessagesScreen> {
   }
 
   void _changed() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    if (SchedulerBinding.instance.schedulerPhase == SchedulerPhase.idle) {
+      setState(() {});
+      return;
+    }
+    if (_rebuildScheduled) return;
+    _rebuildScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rebuildScheduled = false;
+      if (mounted) setState(() {});
+    });
   }
 
   @override

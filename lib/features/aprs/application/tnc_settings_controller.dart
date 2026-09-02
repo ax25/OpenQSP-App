@@ -22,6 +22,28 @@ import '../openqsp_carriage/openqsp_aprs_carriage.dart';
 
 enum OpenQspCheckState { notChecked, waiting, available, noResponse, error }
 
+enum AprsConsoleDirection { tx, rx, other }
+
+final class AprsConsoleEntry {
+  const AprsConsoleEntry({
+    required this.timestamp,
+    required this.direction,
+    required this.source,
+    required this.destination,
+    required this.via,
+    required this.type,
+    required this.content,
+  });
+
+  final DateTime timestamp;
+  final AprsConsoleDirection direction;
+  final String source;
+  final String destination;
+  final String via;
+  final String type;
+  final String content;
+}
+
 /// APRS application destination (tocall), distinct from the message addressee.
 const openQspAprsTocall = 'APOQSP';
 
@@ -58,6 +80,7 @@ class TncSettingsController extends ChangeNotifier {
   static const _ansiGreen = '\x1B[32m';
   static const _ansiRed = '\x1B[31m';
   static const _ansiReset = '\x1B[0m';
+  static const _maximumConsoleEntries = 300;
 
   final BluetoothTncStorage storage;
   final BluetoothTncService service;
@@ -78,6 +101,7 @@ class TncSettingsController extends ChangeNotifier {
   final List<String> _activity = [];
   final List<String> _ax25Activity = [];
   final List<String> _aprsActivity = [];
+  final List<AprsConsoleEntry> _aprsConsoleEntries = [];
   static const Ax25Decoder _ax25Decoder = Ax25Decoder();
   static const AprsParser _aprsParser = AprsParser();
   int rxAx25Frames = 0;
@@ -113,7 +137,15 @@ class TncSettingsController extends ChangeNotifier {
   List<String> get kissActivity => List.unmodifiable(_activity);
   List<String> get ax25Activity => List.unmodifiable(_ax25Activity);
   List<String> get aprsActivity => List.unmodifiable(_aprsActivity);
+  List<AprsConsoleEntry> get aprsConsoleEntries =>
+      List.unmodifiable(_aprsConsoleEntries);
   bool get kissReady => state == TncConnectionState.connected;
+
+  void clearAprsConsole() {
+    if (_aprsConsoleEntries.isEmpty) return;
+    _aprsConsoleEntries.clear();
+    _notify();
+  }
 
   String? get _localAprsIdentity {
     final call = sourceCallsign;
@@ -169,7 +201,11 @@ class TncSettingsController extends ChangeNotifier {
       value.replaceAll('\r', ' ').replaceAll('\n', ' ').trim();
 
   static String _trafficType(AprsPacket packet) => switch (packet) {
-    AprsTextMessage(:final text) when text.startsWith('Q1:') => 'OPENQSP',
+    AprsTextMessage(:final text)
+        when text.startsWith('Q1:') ||
+            text.startsWith('Q1A:') ||
+            text.startsWith('Q1N:') =>
+      'OPENQSP',
     AprsTextMessage() => 'MESSAGE',
     AprsAck() => 'ACK',
     AprsReject() => 'REJECT',
@@ -188,6 +224,9 @@ class TncSettingsController extends ChangeNotifier {
     return switch (packet) {
       AprsTextMessage(:final text) when text.startsWith('Q1:') =>
         _humanizeOpenQspAprs(packet, transmitted: transmitted),
+      AprsTextMessage(:final text)
+          when text.startsWith('Q1A:') || text.startsWith('Q1N:') =>
+        _humanizeOpenQspControl(text),
       AprsTextMessage(:final text, :final messageId) =>
         messageId == null ? text : '$text [message id $messageId]',
       AprsAck(:final messageId) => 'message $messageId acknowledged',
@@ -195,6 +234,25 @@ class TncSettingsController extends ChangeNotifier {
       AprsUnknown() => _humanizeAprsUnknown(packet),
       AprsInvalid(:final reason) => 'invalid APRS packet: $reason',
     };
+  }
+
+  static String _humanizeOpenQspControl(String text) {
+    if (text.startsWith('Q1A:')) {
+      return 'transaction ${text.substring(4)} acknowledged';
+    }
+    final parts = text.split(':');
+    if (parts.length == 3 && parts.first == 'Q1N') {
+      final mask = int.tryParse(parts[2], radix: 16);
+      if (mask != null) {
+        final missing = <String>[];
+        for (var index = 0; index < 16; index++) {
+          if ((mask & (1 << index)) != 0) missing.add('${index + 1}');
+        }
+        return 'transaction ${parts[1]} missing fragments '
+            '${missing.isEmpty ? '-' : missing.join(',')} (mask 0x${parts[2]})';
+      }
+    }
+    return 'OpenQSP control $text';
   }
 
   String _humanizeOpenQspAprs(
@@ -267,24 +325,51 @@ class TncSettingsController extends ChangeNotifier {
     final match = RegExp(
       r'^(\d{2})(\d{2}\.\d{2})([NS])(.)(\d{3})(\d{2}\.\d{2})([EW])(.)(.*)$',
     ).firstMatch(payload);
-    if (match == null) return 'position data: ${_singleLine(payload)}';
+    if (match != null) {
+      final latDegrees = int.parse(match.group(1)!);
+      final latMinutes = double.parse(match.group(2)!);
+      final lonDegrees = int.parse(match.group(5)!);
+      final lonMinutes = double.parse(match.group(6)!);
+      var latitude = latDegrees + latMinutes / 60;
+      var longitude = lonDegrees + lonMinutes / 60;
+      if (match.group(3) == 'S') latitude = -latitude;
+      if (match.group(7) == 'W') longitude = -longitude;
+      final comment = match.group(9) ?? '';
+      final weather = _weatherFields(comment);
+      final suffix = weather.isNotEmpty
+          ? ' · $weather'
+          : comment.isEmpty
+          ? ''
+          : ' · ${_singleLine(comment)}';
+      return 'lat ${latitude.toStringAsFixed(5)}, '
+          'lon ${longitude.toStringAsFixed(5)}$suffix';
+    }
 
-    final latDegrees = int.parse(match.group(1)!);
-    final latMinutes = double.parse(match.group(2)!);
-    final lonDegrees = int.parse(match.group(5)!);
-    final lonMinutes = double.parse(match.group(6)!);
-    var latitude = latDegrees + latMinutes / 60;
-    var longitude = lonDegrees + lonMinutes / 60;
-    if (match.group(3) == 'S') latitude = -latitude;
-    if (match.group(7) == 'W') longitude = -longitude;
-    final comment = match.group(9) ?? '';
-    final weather = _weatherFields(comment);
-    final suffix = weather.isNotEmpty
-        ? ' · $weather'
-        : comment.isEmpty
-        ? ''
-        : ' · ${_singleLine(comment)}';
-    return 'lat ${latitude.toStringAsFixed(5)}, lon ${longitude.toStringAsFixed(5)}$suffix';
+    final compressed = _humanizeCompressedPosition(payload);
+    return compressed ?? 'position data: ${_singleLine(payload)}';
+  }
+
+  static String? _humanizeCompressedPosition(String payload) {
+    if (payload.length < 10) return null;
+    int? decode(String value) {
+      var result = 0;
+      for (final unit in value.codeUnits) {
+        if (unit < 33 || unit > 123) return null;
+        result = result * 91 + (unit - 33);
+      }
+      return result;
+    }
+
+    final y = decode(payload.substring(1, 5));
+    final x = decode(payload.substring(5, 9));
+    if (y == null || x == null) return null;
+    final latitude = 90 - y / 380926.0;
+    final longitude = -180 + x / 190463.0;
+    if (latitude.abs() > 90 || longitude.abs() > 180) return null;
+    final comment = payload.length > 10 ? _singleLine(payload.substring(10)) : '';
+    final suffix = comment.isEmpty ? '' : ' · $comment';
+    return 'lat ${latitude.toStringAsFixed(5)}, '
+        'lon ${longitude.toStringAsFixed(5)}$suffix';
   }
 
   static String _humanizeWeather(String payload) {
@@ -323,6 +408,54 @@ class TncSettingsController extends ChangeNotifier {
     return parts.join(', ');
   }
 
+  String _trafficVia(AprsPacket packet, {required bool transmitted}) {
+    if (transmitted) return 'RF TX';
+    if (packet.igate case final igate?) return 'IGATE $igate';
+    final digipeaters = packet.frame.digipeaters;
+    if (digipeaters.isNotEmpty) {
+      return 'RF VIA ${digipeaters.map((address) => address.pathText).join(',')}';
+    }
+    // No APRS third-party wrapper and no AX.25 digipeater path means only that
+    // this frame arrived from the attached TNC. It does not prove RF directness.
+    return 'RF';
+  }
+
+  void _addConsoleEntry(AprsConsoleEntry entry) {
+    _aprsConsoleEntries.add(entry);
+    if (_aprsConsoleEntries.length > _maximumConsoleEntries) {
+      _aprsConsoleEntries.removeRange(
+        0,
+        _aprsConsoleEntries.length - _maximumConsoleEntries,
+      );
+    }
+  }
+
+  void _recordTraffic(AprsPacket packet, {required bool transmitted}) {
+    final source = packet.frame.source.toString();
+    final destination = switch (packet) {
+      AprsTextMessage(:final addressee) => addressee,
+      AprsAck(:final addressee) => addressee,
+      AprsReject(:final addressee) => addressee,
+      AprsUnknown() || AprsInvalid() => packet.frame.destination.toString(),
+    };
+    final content = _singleLine(
+      _trafficContent(packet, transmitted: transmitted),
+    );
+    _addConsoleEntry(
+      AprsConsoleEntry(
+        timestamp: DateTime.now(),
+        direction: transmitted
+            ? AprsConsoleDirection.tx
+            : AprsConsoleDirection.rx,
+        source: source,
+        destination: destination,
+        via: _trafficVia(packet, transmitted: transmitted),
+        type: _trafficType(packet),
+        content: content,
+      ),
+    );
+  }
+
   void _debugTraffic(AprsPacket packet, {required bool transmitted}) {
     final color = transmitted
         ? _ansiRed
@@ -339,15 +472,30 @@ class TncSettingsController extends ChangeNotifier {
     final content = _singleLine(
       _trafficContent(packet, transmitted: transmitted),
     );
-    final ingress = transmitted
-        ? ''
-        : packet.igate == null
-        ? ' | RF DIRECT'
-        : ' | IGATE ${packet.igate}';
+    final ingress = transmitted ? '' : ' | ${_trafficVia(packet, transmitted: false)}';
     _debugColor(
       '${transmitted ? 'TX' : 'RX'} $source -> $destination$ingress | '
       '${_trafficType(packet)} | $content',
       color,
+    );
+  }
+
+  void _recordOtherAx25(Ax25Frame frame, {required bool transmitted}) {
+    final via = transmitted
+        ? 'RF TX'
+        : frame.digipeaters.isEmpty
+        ? 'RF'
+        : 'RF VIA ${frame.digipeaters.map((address) => address.pathText).join(',')}';
+    _addConsoleEntry(
+      AprsConsoleEntry(
+        timestamp: DateTime.now(),
+        direction: AprsConsoleDirection.other,
+        source: frame.source.toString(),
+        destination: frame.destination.toString(),
+        via: via,
+        type: 'AX25',
+        content: _singleLine(frame.informationText),
+      ),
     );
   }
 
@@ -367,8 +515,9 @@ class TncSettingsController extends ChangeNotifier {
   void _decodeAprs(Ax25Frame frame) {
     final packet = _aprsParser.parse(frame);
     if (packet == null) {
+      _recordOtherAx25(frame, transmitted: false);
       _debugColor(
-        'RX ${frame.source} -> ${frame.destination} | RF DIRECT | AX25 | '
+        'RX ${frame.source} -> ${frame.destination} | RF | AX25 | '
         '${_singleLine(frame.informationText)}',
         _ansiBlue,
       );
@@ -377,6 +526,7 @@ class TncSettingsController extends ChangeNotifier {
     rxAprsPackets++;
     if (packet is AprsInvalid) {
       aprsParseErrors++;
+      _recordTraffic(packet, transmitted: false);
       _debugTraffic(packet, transmitted: false);
       return;
     }
@@ -408,6 +558,7 @@ class TncSettingsController extends ChangeNotifier {
     }
     _aprsActivity.insert(0, _describeAprs(packet));
     if (_aprsActivity.length > 10) _aprsActivity.removeLast();
+    _recordTraffic(packet, transmitted: false);
     _debugTraffic(packet, transmitted: false);
   }
 
@@ -603,18 +754,22 @@ class TncSettingsController extends ChangeNotifier {
     txKissFrames++;
     _activity.insert(0, 'TX  ${_hex(const KissEncoder().encode(frame))}');
     if (_activity.length > 10) _activity.removeLast();
-    if (kDebugMode && frame.port == 0 && frame.command == 0) {
+    if (frame.port == 0 && frame.command == 0) {
       try {
         final ax25 = _ax25Decoder.decode(frame.payload);
         final aprs = _aprsParser.parse(ax25);
         if (aprs != null) {
-          _debugTraffic(aprs, transmitted: true);
+          _recordTraffic(aprs, transmitted: true);
+          if (kDebugMode) _debugTraffic(aprs, transmitted: true);
         } else {
-          _debugColor(
-            'TX ${ax25.source} -> ${ax25.destination} | AX25 | '
-            '${_singleLine(ax25.informationText)}',
-            _ansiRed,
-          );
+          _recordOtherAx25(ax25, transmitted: true);
+          if (kDebugMode) {
+            _debugColor(
+              'TX ${ax25.source} -> ${ax25.destination} | AX25 | '
+              '${_singleLine(ax25.informationText)}',
+              _ansiRed,
+            );
+          }
         }
       } on Object {
         // TX diagnostics must never affect transport behavior.
