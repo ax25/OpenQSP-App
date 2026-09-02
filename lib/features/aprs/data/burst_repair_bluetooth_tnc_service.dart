@@ -251,6 +251,14 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     _sentBursts.remove(transactionId)?.retryTimer?.cancel();
   }
 
+  /// Stop reliability work for a request whose logical response proves that
+  /// the server already received and processed the original Q2 transaction.
+  /// Response frames may use a different transaction ID, so upper protocol
+  /// layers need an explicit way to retire the request-side retry state.
+  void completeOutboundTransaction(String transactionId) {
+    _removeSentBurst(transactionId);
+  }
+
   void _handleControl(OpenQspBurstControl control) {
     switch (control) {
       case OpenQspBurstAck(:final transactionId):
