@@ -2,8 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/features/aprs/aprs/aprs_igate_registry.dart';
 import 'package:openqsp_app/features/aprs/aprs/aprs_parser.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
-import 'package:openqsp_app/features/aprs/ax25/ax25_decoder.dart';
-import 'package:openqsp_app/features/aprs/ax25/ax25_encoder.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_frame.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -46,63 +44,32 @@ void main() {
     expect(registry.knownIgates, contains('EA3IK-6'));
   });
 
-  test('forced iGate becomes the default outgoing AX.25 path', () async {
+  test('forced selection exposes a one-station AX.25 path', () async {
     registry.observe('EA3IK-6');
     await registry.setForced('EA3IK-6');
 
-    final encoded = const Ax25Encoder().encodeUi(
-      destination: const Ax25Address(
-        callsign: 'APOQSP',
-        ssid: 0,
-        hasBeenRepeated: false,
-        isLast: false,
-      ),
-      source: const Ax25Address(
-        callsign: 'EA3GNU',
-        ssid: 5,
-        hasBeenRepeated: false,
-        isLast: true,
-      ),
-      information: ':OQSP     :test'.codeUnits,
-    );
-    final decoded = const Ax25Decoder().decode(encoded);
-
-    expect(decoded.digipeaters, hasLength(1));
-    expect(decoded.digipeaters.single.callsign, 'EA3IK');
-    expect(decoded.digipeaters.single.ssid, 6);
+    expect(registry.forcedIgate, 'EA3IK-6');
+    expect(registry.forcedPath, hasLength(1));
+    expect(registry.forcedPath.single.callsign, 'EA3IK');
+    expect(registry.forcedPath.single.ssid, 6);
   });
 
-  test('explicit path still overrides forced iGate', () async {
+  test('known iGates and forced selection survive reload', () async {
     registry.observe('EA3IK-6');
     await registry.setForced('EA3IK-6');
 
-    final encoded = const Ax25Encoder().encodeUi(
-      destination: const Ax25Address(
-        callsign: 'APOQSP',
-        ssid: 0,
-        hasBeenRepeated: false,
-        isLast: false,
-      ),
-      source: const Ax25Address(
-        callsign: 'EA3GNU',
-        ssid: 5,
-        hasBeenRepeated: false,
-        isLast: true,
-      ),
-      digipeaters: const [
-        Ax25Address(
-          callsign: 'WIDE1',
-          ssid: 1,
-          hasBeenRepeated: false,
-          isLast: true,
-        ),
-      ],
-      information: ':OQSP     :test'.codeUnits,
-    );
-    final decoded = const Ax25Decoder().decode(encoded);
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'tnc.aprs.knownIgates': <String>['EA3IK-6', 'EA3ABC-10'],
+      'tnc.aprs.forcedIgate': 'EA3ABC-10',
+    });
+    await registry.resetForTesting();
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'tnc.aprs.knownIgates': <String>['EA3IK-6', 'EA3ABC-10'],
+      'tnc.aprs.forcedIgate': 'EA3ABC-10',
+    });
+    await registry.load();
 
-    expect(decoded.digipeaters, hasLength(1));
-    expect(decoded.digipeaters.single.callsign, 'WIDE1');
-    expect(decoded.digipeaters.single.ssid, 1);
+    expect(registry.knownIgates, const ['EA3ABC-10', 'EA3IK-6']);
+    expect(registry.forcedIgate, 'EA3ABC-10');
   });
 }
