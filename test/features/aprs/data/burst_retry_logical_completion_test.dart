@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:openqsp_app/features/aprs/aprs/aprs_message_encoder.dart';
+import 'package:openqsp_app/features/aprs/aprs/aprs_packet.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_address.dart';
 import 'package:openqsp_app/features/aprs/ax25/ax25_encoder.dart';
 import 'package:openqsp_app/features/aprs/data/bluetooth_tnc_service.dart';
