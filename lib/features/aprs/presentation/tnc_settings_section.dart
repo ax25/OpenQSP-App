@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/openqsp_protocol/openqsp_models.dart';
+import '../aprs/aprs_igate_registry.dart';
 import '../application/tnc_settings_controller.dart';
 import '../data/aprs_path_storage.dart';
 import '../domain/aprs_path.dart';
@@ -23,6 +24,7 @@ class TncSettingsSection extends StatefulWidget {
 
 class _TncSettingsSectionState extends State<TncSettingsSection> {
   TncSettingsController get controller => widget.controller;
+  AprsIgateRegistry get igateRegistry => AprsIgateRegistry.instance;
   late final AprsPathStorage _aprsPathStorage;
   AprsPathMode _aprsPathMode = AprsPathMode.oneHop;
   bool _aprsPathLoaded = false;
@@ -32,7 +34,9 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
     super.initState();
     _aprsPathStorage = widget.aprsPathStorage ?? PreferencesAprsPathStorage();
     controller.addListener(_refresh);
+    igateRegistry.addListener(_refresh);
     controller.initialize();
+    igateRegistry.load();
     _loadAprsPath();
   }
 
@@ -57,6 +61,7 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
   @override
   void dispose() {
     controller.removeListener(_refresh);
+    igateRegistry.removeListener(_refresh);
     super.dispose();
   }
 
@@ -169,6 +174,34 @@ class _TncSettingsSectionState extends State<TncSettingsSection> {
                           ),
                         )
                         .toList(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(width: 105, child: Text('Forzar iGate:')),
+                Expanded(
+                  child: DropdownButton<String>(
+                    key: const Key('forcedIgate'),
+                    isExpanded: true,
+                    value: igateRegistry.forcedIgate ?? '',
+                    onChanged: (value) {
+                      if (value == null) return;
+                      igateRegistry.setForced(value.isEmpty ? null : value);
+                    },
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: '',
+                        child: Text('No'),
+                      ),
+                      for (final igate in igateRegistry.knownIgates)
+                        DropdownMenuItem<String>(
+                          value: igate,
+                          child: Text(igate),
+                        ),
+                    ],
                   ),
                 ),
               ],
