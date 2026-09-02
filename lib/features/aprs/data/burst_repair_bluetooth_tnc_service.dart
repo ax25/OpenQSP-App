@@ -22,7 +22,7 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     this.delegate, {
     this.repairDelay = const Duration(seconds: 5),
     this.finalFragmentRepairDelay = const Duration(seconds: 2),
-    this.repairRetryInterval = const Duration(seconds: 15),
+    this.repairRetryInterval = const Duration(seconds: 20),
     this.duplicateAckMinInterval = const Duration(seconds: 15),
     this.silentRetryTtl = const Duration(seconds: 65),
     this.cacheTtl = openQspAprsDefaultTtl,
