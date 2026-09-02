@@ -58,7 +58,11 @@ Future<TncSettingsController> connectedController({
 }
 
 Widget subject(TncSettingsController controller) => MaterialApp(
-  home: Scaffold(body: TncSettingsSection(controller: controller)),
+  home: Scaffold(
+    body: SingleChildScrollView(
+      child: TncSettingsSection(controller: controller),
+    ),
+  ),
 );
 
 void main() {
