@@ -291,6 +291,44 @@ void main() {
     expect(session.messageReceiveState, AprsMessageReceiveState.hidden);
     expect(session.messageReceivePeer, isNull);
   });
+
+  test('duplicate fragments after a complete message do not turn receive into failure', () async {
+    session.dispose();
+    session = AprsSessionController(
+      tncController: tnc,
+      receiveFailureDelay: const Duration(milliseconds: 15),
+      receiveHideDelay: const Duration(milliseconds: 35),
+      receiveCompletedVisibleDuration: const Duration(milliseconds: 25),
+    );
+
+    await session.activate();
+    service.receiveCapabilities();
+    await Future<void>.delayed(Duration.zero);
+
+    final fragments = service.messageFragments(transactionId: 'M02');
+    for (final fragment in fragments) {
+      service.receiveFragment(fragment);
+    }
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.messageReceiveState, AprsMessageReceiveState.completed);
+    expect(session.messageReceivePeer, 'EA3ABC');
+
+    service.receiveFragment(fragments[fragments.length - 2]);
+    service.receiveFragment(fragments.last);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(session.messageReceiveState, AprsMessageReceiveState.completed);
+    expect(session.messageReceivePeer, 'EA3ABC');
+
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    expect(session.messageReceiveState, AprsMessageReceiveState.hidden);
+    expect(session.messageReceivePeer, isNull);
+
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+    expect(session.messageReceiveState, isNot(AprsMessageReceiveState.failed));
+  });
 }
 
 final class _EmptyStorage implements BluetoothTncStorage {
