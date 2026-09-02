@@ -8,6 +8,7 @@ import '../aprs/aprs_parser.dart';
 import '../ax25/ax25_address.dart';
 import '../ax25/ax25_decoder.dart';
 import '../ax25/ax25_encoder.dart';
+import '../ax25/ax25_frame.dart';
 import '../domain/tnc_device.dart';
 import '../kiss/kiss_decoder.dart';
 import '../kiss/kiss_encoder.dart';
@@ -157,13 +158,13 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
   }
 
   void _forwardCompactStored(
-    dynamic ax25,
+    Ax25Frame ax25,
     AprsTextMessage message,
     String transactionId,
   ) {
     final transaction = decodeBase36(transactionId, 3);
-    // Core STORED is the complete frame 01 44 00 00. Build a one-fragment Q2
-    // envelope for downstream consumers. This synthetic frame never goes on RF.
+    // Core STORED is 01 44 00 00. Build a one-fragment Q2 envelope for
+    // downstream consumers. This synthetic frame never goes on RF.
     final syntheticBody =
         'Q2${encodeOpenQspBase91([transaction, 0x00, 0x01, 0x44, 0x00, 0x00])}';
     final information = _messageEncoder.encode(
@@ -367,16 +368,6 @@ final class BurstRepairBluetoothTncService implements BluetoothTncService {
     _receivedBursts.clear();
     _completedReceived.clear();
     _completedAckTimers.clear();
-  }
-
-  @override
-  Future<void> dispose() async {
-    _clearReceiveState();
-    await _incomingFrameSubscription.cancel();
-    await _delegateBytesSubscription.cancel();
-    await _incomingDecoder.close();
-    await _incoming.close();
-    await delegate.dispose();
   }
 }
 
