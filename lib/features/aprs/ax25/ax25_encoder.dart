@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../aprs/aprs_igate_registry.dart';
 import 'ax25_address.dart';
 
 final class Ax25EncodeException implements Exception {
@@ -14,10 +15,12 @@ final class Ax25Encoder {
   Uint8List encodeUi({
     required Ax25Address destination,
     required Ax25Address source,
-    List<Ax25Address> digipeaters = const [],
+    List<Ax25Address>? digipeaters,
     required List<int> information,
   }) {
-    final addresses = [destination, source, ...digipeaters];
+    final effectiveDigipeaters =
+        digipeaters ?? AprsIgateRegistry.instance.forcedPath;
+    final addresses = [destination, source, ...effectiveDigipeaters];
     final result = <int>[];
     for (var index = 0; index < addresses.length; index++) {
       result.addAll(_address(addresses[index], index == addresses.length - 1));
