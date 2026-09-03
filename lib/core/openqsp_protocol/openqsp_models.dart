@@ -8,7 +8,18 @@ final class OpenQspGetNewMessages extends OpenQspFrameObject { const OpenQspGetN
 final class OpenQspGetNewBulletins extends OpenQspFrameObject { const OpenQspGetNewBulletins({required this.since, required this.max}); final int since, max; }
 final class OpenQspGetBulletin extends OpenQspFrameObject { const OpenQspGetBulletin(this.sequence); final int sequence; }
 final class OpenQspGetCapabilities extends OpenQspFrameObject { const OpenQspGetCapabilities(); }
-final class OpenQspMessage extends OpenQspFrameObject { const OpenQspMessage({required this.sequence, required this.createdAt, required this.author, required this.recipient, required this.body}); final int sequence, createdAt; final String author, recipient, body; }
+final class OpenQspMessage extends OpenQspFrameObject {
+  const OpenQspMessage({
+    required this.sequence,
+    this.conversationSequence = 1,
+    required this.createdAt,
+    required this.author,
+    required this.recipient,
+    required this.body,
+  });
+  final int sequence, conversationSequence, createdAt;
+  final String author, recipient, body;
+}
 final class OpenQspBulletinHeader extends OpenQspFrameObject { const OpenQspBulletinHeader({required this.sequence, required this.createdAt, required this.author, required this.title}); final int sequence, createdAt; final String author, title; }
 final class OpenQspBulletin extends OpenQspFrameObject { const OpenQspBulletin({required this.sequence, required this.createdAt, required this.author, required this.title, required this.body}); final int sequence, createdAt; final String author, title, body; }
 final class OpenQspEnd extends OpenQspFrameObject { const OpenQspEnd({required this.requestOperation, required this.returnedCount, required this.nextSince, required this.hasMore}); final OpenQspOperation requestOperation; final int returnedCount, nextSince; final bool hasMore; }
