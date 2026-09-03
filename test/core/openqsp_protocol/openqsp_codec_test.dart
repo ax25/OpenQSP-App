@@ -16,12 +16,53 @@ void main() {
     }
   });
 
-  test('MESSAGE byte layout and round trip', () {
-    const object = OpenQspMessage(sequence: 1, createdAt: 2, author: 'EA3ABC', recipient: 'EA3GNU', body: 'TEST');
-    final expected = [1, 0x40, 0, 0x1b, 0,0,0,1, 0,0,0,2, 6, ...'EA3ABC'.codeUnits, 6, ...'EA3GNU'.codeUnits, 4, ...'TEST'.codeUnits];
+  test('MESSAGE byte layout and round trip includes conversation sequence', () {
+    const object = OpenQspMessage(
+      sequence: 1,
+      conversationSequence: 7,
+      createdAt: 2,
+      author: 'EA3ABC',
+      recipient: 'EA3GNU',
+      body: 'TEST',
+    );
+    final expected = [
+      1, 0x40, 0, 0x1f,
+      0,0,0,1,
+      0,0,0,7,
+      0,0,0,2,
+      6, ...'EA3ABC'.codeUnits,
+      6, ...'EA3GNU'.codeUnits,
+      4, ...'TEST'.codeUnits,
+    ];
     expect(codec.encode(object), expected);
     final decoded = codec.decode(expected).object as OpenQspMessage;
-    expect((decoded.sequence, decoded.createdAt, decoded.author, decoded.recipient, decoded.body), (1, 2, 'EA3ABC', 'EA3GNU', 'TEST'));
+    expect(
+      (
+        decoded.sequence,
+        decoded.conversationSequence,
+        decoded.createdAt,
+        decoded.author,
+        decoded.recipient,
+        decoded.body,
+      ),
+      (1, 7, 2, 'EA3ABC', 'EA3GNU', 'TEST'),
+    );
+  });
+
+  test('MESSAGE rejects zero conversation sequence', () {
+    expect(
+      () => codec.encode(
+        const OpenQspMessage(
+          sequence: 1,
+          conversationSequence: 0,
+          createdAt: 2,
+          author: 'EA3ABC',
+          recipient: 'EA3GNU',
+          body: 'x',
+        ),
+      ),
+      throwsA(isA<OpenQspInvalidFieldException>()),
+    );
   });
 
   test('all remaining objects round trip', () {
@@ -43,7 +84,7 @@ void main() {
   });
 
   test('metadata and allowed unsolicited', () {
-    const message = OpenQspMessage(sequence: 1, createdAt: 2, author: 'EA3ABC', recipient: 'EA3GNU', body: 'x');
+    const message = OpenQspMessage(sequence: 1, conversationSequence: 1, createdAt: 2, author: 'EA3ABC', recipient: 'EA3GNU', body: 'x');
     final frame = codec.decode(codec.encode(message, unsolicited: true));
     expect((frame.version, frame.operation, frame.flags, frame.unsolicited), (1, OpenQspOperation.message, 1, true));
     expect(() => codec.encode(const OpenQspStored(), unsolicited: true), throwsA(isA<OpenQspInvalidFieldException>()));
