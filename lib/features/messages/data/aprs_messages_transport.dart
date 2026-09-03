@@ -225,11 +225,12 @@ final class AprsMessagesTransport
           final pending = _pendingSync;
           if (pending != null && !pending.completer.isCompleted) {
             _mergeSessionMessages(pending.messages);
+            final missingFromPage = pending.cursor < nextSince;
             pending.completer.complete(
               SyncBatch(
                 messages: List.unmodifiable(pending.messages),
-                cursor: '$nextSince',
-                hasMore: hasMore,
+                cursor: '${pending.cursor}',
+                hasMore: hasMore || missingFromPage,
               ),
             );
           }
@@ -695,13 +696,20 @@ final class _PendingSync {
 
   final List<InternetMessage> messages = [];
   final Completer<SyncBatch> completer = Completer<SyncBatch>();
+  final Set<int> _receivedAhead = <int>{};
   int _cursor;
   Timer? _timeout;
 
+  int get cursor => _cursor;
+
   String? advance(int sequence) {
     if (sequence <= _cursor) return null;
-    _cursor = sequence;
-    return '$sequence';
+    _receivedAhead.add(sequence);
+    final previous = _cursor;
+    while (_receivedAhead.remove(_cursor + 1)) {
+      _cursor++;
+    }
+    return _cursor == previous ? null : '$_cursor';
   }
 
   void touch(Duration timeout) {
