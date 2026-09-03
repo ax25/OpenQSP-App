@@ -13,11 +13,20 @@ abstract interface class AprsSsidStorage {
   Future<void> writeSsid(int ssid);
 }
 
+abstract interface class OpenQspTransactionSequenceStorage {
+  Future<int> readTransactionSequence();
+  Future<void> writeTransactionSequence(int sequence);
+}
+
 class PreferencesBluetoothTncStorage
-    implements BluetoothTncStorage, AprsSsidStorage {
+    implements
+        BluetoothTncStorage,
+        AprsSsidStorage,
+        OpenQspTransactionSequenceStorage {
   static const _idKey = 'tnc.bluetooth.id';
   static const _nameKey = 'tnc.bluetooth.name';
   static const _ssidKey = 'tnc.aprs.ssid';
+  static const _transactionSequenceKey = 'tnc.openqsp.transaction_sequence';
 
   @override
   Future<int> readSsid() async =>
@@ -27,6 +36,22 @@ class PreferencesBluetoothTncStorage
   Future<void> writeSsid(int ssid) async {
     if (ssid < 0 || ssid > 15) throw RangeError.range(ssid, 0, 15);
     await (await SharedPreferences.getInstance()).setInt(_ssidKey, ssid);
+  }
+
+  @override
+  Future<int> readTransactionSequence() async {
+    final stored =
+        (await SharedPreferences.getInstance()).getInt(_transactionSequenceKey) ?? 0;
+    return stored >= 0 && stored < 46656 ? stored : 0;
+  }
+
+  @override
+  Future<void> writeTransactionSequence(int sequence) async {
+    if (sequence < 0 || sequence >= 46656) {
+      throw RangeError.range(sequence, 0, 46655);
+    }
+    await (await SharedPreferences.getInstance())
+        .setInt(_transactionSequenceKey, sequence);
   }
 
   @override
