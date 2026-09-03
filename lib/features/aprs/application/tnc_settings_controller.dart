@@ -83,6 +83,7 @@ class TncSettingsController extends ChangeNotifier {
   static const _ansiRed = '\x1B[31m';
   static const _ansiReset = '\x1B[0m';
   static const _maximumConsoleEntries = 300;
+  static const _transactionSequenceModulo = 36 * 36 * 36;
 
   final BluetoothTncStorage storage;
   final BluetoothTncService service;
@@ -732,6 +733,17 @@ class TncSettingsController extends ChangeNotifier {
     _notify();
   }
 
+  Future<String> _allocateOpenQspTransactionId() async {
+    final current = _transactionSequence % _transactionSequenceModulo;
+    final next = (current + 1) % _transactionSequenceModulo;
+    if (storage is OpenQspTransactionSequenceStorage) {
+      await (storage as OpenQspTransactionSequenceStorage)
+          .writeTransactionSequence(next);
+    }
+    _transactionSequence = next;
+    return current.toRadixString(36).toUpperCase().padLeft(3, '0');
+  }
+
   Future<void> _sendCapabilitiesRequest(
     String call,
     List<OpenQspAprsFragment> fragments,
@@ -777,10 +789,7 @@ class TncSettingsController extends ChangeNotifier {
 
     try {
       final core = _openQspCodec.encode(const OpenQspGetCapabilities());
-      final transactionId = (_transactionSequence++ % 46656)
-          .toRadixString(36)
-          .toUpperCase()
-          .padLeft(3, '0');
+      final transactionId = await _allocateOpenQspTransactionId();
       final fragments = fragmentFrame(core, transactionId);
 
       await _sendCapabilitiesRequest(call, fragments);
@@ -873,6 +882,11 @@ class TncSettingsController extends ChangeNotifier {
     device = await storage.read();
     if (storage is AprsSsidStorage) {
       aprsSsid = await (storage as AprsSsidStorage).readSsid();
+    }
+    if (storage is OpenQspTransactionSequenceStorage) {
+      _transactionSequence =
+          await (storage as OpenQspTransactionSequenceStorage)
+              .readTransactionSequence();
     }
     state = device == null
         ? TncConnectionState.notConfigured
