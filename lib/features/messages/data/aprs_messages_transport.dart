@@ -595,6 +595,7 @@ final class AprsMessagesTransport
       value.createdAt * 1000,
       isUtc: true,
     ),
+    conversationSequence: value.conversationSequence,
   );
 
   static String _serverMessageId(String recipient, int sequence) =>
