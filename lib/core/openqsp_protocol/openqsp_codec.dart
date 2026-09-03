@@ -24,8 +24,10 @@ final class OpenQspCodec {
         writer.u32(since, 'since'); writer.rangedU8(max, 'max', 1, 20);
       case OpenQspGetBulletin(:final sequence): writer.u32(sequence, 'sequence', nonZero: true);
       case OpenQspGetCapabilities() || OpenQspStored(): break;
-      case OpenQspMessage(:final sequence, :final createdAt, :final author, :final recipient, :final body):
-        writer.u32(sequence, 'sequence', nonZero: true); writer.u32(createdAt, 'created_at', nonZero: true);
+      case OpenQspMessage(:final sequence, :final conversationSequence, :final createdAt, :final author, :final recipient, :final body):
+        writer.u32(sequence, 'sequence', nonZero: true);
+        writer.u32(conversationSequence, 'conversation_sequence', nonZero: true);
+        writer.u32(createdAt, 'created_at', nonZero: true);
         writer.callsign(author, 'author'); writer.callsign(recipient, 'recipient'); writer.text(body, 'body', 1, 208);
       case OpenQspBulletinHeader(:final sequence, :final createdAt, :final author, :final title):
         writer.u32(sequence, 'sequence', nonZero: true); writer.u32(createdAt, 'created_at', nonZero: true);
@@ -80,7 +82,14 @@ final class OpenQspCodec {
       case OpenQspOperation.getBulletin: return OpenQspGetBulletin(r.u32('sequence', nonZero: true));
       case OpenQspOperation.getCapabilities: return const OpenQspGetCapabilities();
       case OpenQspOperation.message:
-        return OpenQspMessage(sequence: r.u32('sequence', nonZero: true), createdAt: r.u32('created_at', nonZero: true), author: r.callsign('author'), recipient: r.callsign('recipient'), body: r.text('body', 1, 208));
+        return OpenQspMessage(
+          sequence: r.u32('sequence', nonZero: true),
+          conversationSequence: r.u32('conversation_sequence', nonZero: true),
+          createdAt: r.u32('created_at', nonZero: true),
+          author: r.callsign('author'),
+          recipient: r.callsign('recipient'),
+          body: r.text('body', 1, 208),
+        );
       case OpenQspOperation.bulletinHeader:
         return OpenQspBulletinHeader(sequence: r.u32('sequence', nonZero: true), createdAt: r.u32('created_at', nonZero: true), author: r.callsign('author'), title: r.text('title', 1, 64));
       case OpenQspOperation.bulletin:

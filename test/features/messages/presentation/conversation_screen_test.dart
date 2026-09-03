@@ -43,6 +43,49 @@ void main() {
     expect(find.byKey(const Key('status-today-1')), findsNothing);
   });
 
+  testWidgets('shows placeholders only for bounded incoming conversation gaps', (
+    tester,
+  ) async {
+    final now = DateTime.now();
+    final repository = _Repository([
+      _message(
+        'incoming-10',
+        now,
+        from: 'N0CALL',
+        conversationSequence: 10,
+      ),
+      _message(
+        'sent-between',
+        now.add(const Duration(minutes: 1)),
+        from: 'EA3GNU',
+      ),
+      _message(
+        'incoming-12',
+        now.add(const Duration(minutes: 2)),
+        from: 'N0CALL',
+        conversationSequence: 12,
+      ),
+    ]);
+    final controller = await _controller(repository);
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConversationScreen(
+          controller: controller,
+          remoteCallsign: 'N0CALL',
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const Key('missing-message-11')), findsOneWidget);
+    expect(find.text('Mensaje no descargado'), findsOneWidget);
+    expect(find.text('#11'), findsOneWidget);
+    expect(find.byKey(const Key('missing-message-1')), findsNothing);
+    expect(find.byKey(const Key('missing-message-9')), findsNothing);
+  });
+
   testWidgets('composer allows overflow but disables send and refuses blank messages', (tester) async {
     final repository = _Repository([]);
     final controller = await _controller(repository);
@@ -131,7 +174,21 @@ Future<MessagesController> _controller(_Repository repository) async {
   return controller;
 }
 
-InternetMessage _message(String id, DateTime createdAt, {required String from, MessageDeliveryStatus deliveryStatus = MessageDeliveryStatus.stored}) => InternetMessage(id: id, from: from, to: from == 'EA3GNU' ? 'N0CALL' : 'EA3GNU', body: 'message $id', createdAt: createdAt, deliveryStatus: deliveryStatus);
+InternetMessage _message(
+  String id,
+  DateTime createdAt, {
+  required String from,
+  int? conversationSequence,
+  MessageDeliveryStatus deliveryStatus = MessageDeliveryStatus.stored,
+}) => InternetMessage(
+  id: id,
+  from: from,
+  to: from == 'EA3GNU' ? 'N0CALL' : 'EA3GNU',
+  body: 'message $id',
+  createdAt: createdAt,
+  conversationSequence: conversationSequence,
+  deliveryStatus: deliveryStatus,
+);
 
 class _MemoryLocalStore implements LocalMessagesStore {
   final _items = <InternetMessage>[];

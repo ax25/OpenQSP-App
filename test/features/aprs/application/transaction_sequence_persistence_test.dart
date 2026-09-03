@@ -121,21 +121,35 @@ void main() {
     second.dispose();
   });
 
-  test('transaction sequence wraps from ZZZ to 000', () async {
-    final storage = _PersistentMemoryStorage(device)
-      ..transactionSequence = 36 * 36 * 36 - 1;
-    final service = _FakeTncService();
-    final controller = TncSettingsController(
+  test('Q2 wire transaction sequence wraps from 073 to 000', () async {
+    final storage = _PersistentMemoryStorage(device)..transactionSequence = 0xff;
+
+    final lastByteService = _FakeTncService();
+    final lastByte = TncSettingsController(
       storage: storage,
-      service: service,
+      service: lastByteService,
       sourceCallsign: 'EA3GNU',
     );
-    await controller.initialize();
-    await controller.connect();
-    await controller.checkOpenQsp();
+    await lastByte.initialize();
+    await lastByte.connect();
+    await lastByte.checkOpenQsp();
 
-    expect(await _transactionIdFromProbe(service.sentBytes.single), 'ZZZ');
-    expect(storage.transactionSequence, 0);
-    controller.dispose();
+    expect(await _transactionIdFromProbe(lastByteService.sentBytes.single), '073');
+    expect(storage.transactionSequence, 0x100);
+    lastByte.dispose();
+
+    final wrappedService = _FakeTncService();
+    final wrapped = TncSettingsController(
+      storage: storage,
+      service: wrappedService,
+      sourceCallsign: 'EA3GNU',
+    );
+    await wrapped.initialize();
+    await wrapped.connect();
+    await wrapped.checkOpenQsp();
+
+    expect(await _transactionIdFromProbe(wrappedService.sentBytes.single), '000');
+    expect(storage.transactionSequence, 0x101);
+    wrapped.dispose();
   });
 }

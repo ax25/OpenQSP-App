@@ -19,6 +19,7 @@ class InternetMessage {
     required this.to,
     required this.body,
     required this.createdAt,
+    this.conversationSequence,
     this.deliveryStatus = MessageDeliveryStatus.stored,
     this.deliveredAt,
   });
@@ -28,6 +29,7 @@ class InternetMessage {
   final String to;
   final String body;
   final DateTime createdAt;
+  final int? conversationSequence;
   final MessageDeliveryStatus deliveryStatus;
   final DateTime? deliveredAt;
 
@@ -40,6 +42,7 @@ class InternetMessage {
       : MessageDirection.received;
 
   InternetMessage copyWith({
+    int? conversationSequence,
     MessageDeliveryStatus? deliveryStatus,
     DateTime? deliveredAt,
   }) => InternetMessage(
@@ -48,6 +51,7 @@ class InternetMessage {
     to: to,
     body: body,
     createdAt: createdAt,
+    conversationSequence: conversationSequence ?? this.conversationSequence,
     deliveryStatus: deliveryStatus ?? this.deliveryStatus,
     deliveredAt: deliveredAt ?? this.deliveredAt,
   );
@@ -58,6 +62,7 @@ class InternetMessage {
     final to = json['to'];
     final body = json['body'];
     final createdAt = json['created_at'];
+    final conversationSequence = json['conversation_sequence'];
     final deliveryStatus = json['delivery_status'];
     final deliveredAt = json['delivered_at'];
     if (id is! String ||
@@ -66,9 +71,14 @@ class InternetMessage {
         to is! String ||
         body is! String ||
         createdAt is! String ||
+        (conversationSequence != null && conversationSequence is! int) ||
         (deliveryStatus != null && deliveryStatus is! String) ||
         (deliveredAt != null && deliveredAt is! String)) {
       throw const FormatException('Invalid message payload');
+    }
+    if (conversationSequence is int &&
+        (conversationSequence <= 0 || conversationSequence > 0xffffffff)) {
+      throw const FormatException('Invalid message conversation sequence');
     }
     return InternetMessage(
       id: id,
@@ -76,6 +86,7 @@ class InternetMessage {
       to: to.toUpperCase(),
       body: body,
       createdAt: DateTime.parse(createdAt).toUtc(),
+      conversationSequence: conversationSequence as int?,
       deliveryStatus: _parseDeliveryStatus(deliveryStatus as String?),
       deliveredAt: deliveredAt == null
           ? null

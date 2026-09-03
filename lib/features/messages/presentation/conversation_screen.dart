@@ -209,6 +209,11 @@ class _ConversationScreenState extends State<ConversationScreen>
   @override
   Widget build(BuildContext context) {
     final messages = widget.controller.historyFor(widget.remoteCallsign);
+    final timeline = _buildConversationTimeline(
+      messages,
+      localCallsign: widget.controller.callsign,
+      remoteCallsign: widget.remoteCallsign,
+    );
     final sending = pendingMessageComposer.isSending(
       widget.controller,
       widget.remoteCallsign,
@@ -268,21 +273,23 @@ class _ConversationScreenState extends State<ConversationScreen>
                   key: const Key('messageList'),
                   controller: _scrollController,
                   padding: const EdgeInsets.all(12),
-                  itemCount: messages.length,
+                  itemCount: timeline.length,
                   itemBuilder: (_, index) {
-                    final message = messages[index];
+                    final item = timeline[index];
+                    if (item is _MissingConversationMessage) {
+                      return _MissingMessagePlaceholder(
+                        sequence: item.sequence,
+                      );
+                    }
+                    final messageItem = item as _ConversationMessage;
+                    final message = messageItem.message;
                     final sent =
                         message.directionFor(widget.controller.callsign) ==
                         MessageDirection.sent;
-                    final showDate = index == 0 ||
-                        !messagesAreOnSameLocalDay(
-                          messages[index - 1].createdAt,
-                          message.createdAt,
-                        );
                     final colors = Theme.of(context).colorScheme;
                     return Column(
                       children: [
-                        if (showDate)
+                        if (messageItem.showDate)
                           Padding(
                             padding: const EdgeInsets.symmetric(vertical: 10),
                             child: Text(
@@ -397,6 +404,120 @@ class _ConversationScreenState extends State<ConversationScreen>
           ),
         ),
       ]),
+    );
+  }
+}
+
+sealed class _ConversationTimelineItem {
+  const _ConversationTimelineItem();
+}
+
+final class _ConversationMessage extends _ConversationTimelineItem {
+  const _ConversationMessage({required this.message, required this.showDate});
+
+  final InternetMessage message;
+  final bool showDate;
+}
+
+final class _MissingConversationMessage extends _ConversationTimelineItem {
+  const _MissingConversationMessage(this.sequence);
+
+  final int sequence;
+}
+
+List<_ConversationTimelineItem> _buildConversationTimeline(
+  List<InternetMessage> messages, {
+  required String localCallsign,
+  required String remoteCallsign,
+}) {
+  final timeline = <_ConversationTimelineItem>[];
+  InternetMessage? previousMessage;
+  int? previousIncomingSequence;
+  final normalizedRemote = remoteCallsign.toUpperCase();
+
+  for (final message in messages) {
+    final isIncomingFromPeer =
+        message.directionFor(localCallsign) == MessageDirection.received &&
+        message.from.toUpperCase() == normalizedRemote;
+    final sequence = isIncomingFromPeer ? message.conversationSequence : null;
+
+    if (sequence != null && previousIncomingSequence != null) {
+      for (
+        var missing = previousIncomingSequence + 1;
+        missing < sequence;
+        missing++
+      ) {
+        timeline.add(_MissingConversationMessage(missing));
+      }
+    }
+
+    final showDate = previousMessage == null ||
+        !messagesAreOnSameLocalDay(
+          previousMessage.createdAt,
+          message.createdAt,
+        );
+    timeline.add(_ConversationMessage(message: message, showDate: showDate));
+    previousMessage = message;
+
+    if (sequence != null &&
+        (previousIncomingSequence == null || sequence > previousIncomingSequence)) {
+      previousIncomingSequence = sequence;
+    }
+  }
+
+  return timeline;
+}
+
+class _MissingMessagePlaceholder extends StatelessWidget {
+  const _MissingMessagePlaceholder({required this.sequence});
+
+  final int sequence;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Semantics(
+      label: 'Mensaje no descargado, secuencia $sequence',
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Center(
+          child: Container(
+            key: Key('missing-message-$sequence'),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerLow,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colors.outlineVariant),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.arrow_downward,
+                  size: 16,
+                  color: colors.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  'Mensaje no descargado',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  '#$sequence',
+                  key: Key('missing-message-sequence-$sequence'),
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
