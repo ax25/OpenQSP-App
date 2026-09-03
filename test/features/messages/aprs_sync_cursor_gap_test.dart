@@ -140,7 +140,7 @@ void main() {
         nextSince: 14,
         hasMore: false,
       ),
-      'END1',
+      'E01',
     );
 
     final firstBatch = await firstSync;
@@ -164,7 +164,7 @@ void main() {
         nextSince: 14,
         hasMore: false,
       ),
-      'END2',
+      'E02',
     );
 
     final secondBatch = await secondSync;
