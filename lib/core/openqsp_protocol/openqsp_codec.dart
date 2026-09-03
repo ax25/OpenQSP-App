@@ -24,6 +24,9 @@ final class OpenQspCodec {
         writer.u32(since, 'since'); writer.rangedU8(max, 'max', 1, 20);
       case OpenQspGetBulletin(:final sequence): writer.u32(sequence, 'sequence', nonZero: true);
       case OpenQspGetCapabilities() || OpenQspStored(): break;
+      case OpenQspGetMessage(:final peer, :final conversationSequence):
+        writer.callsign(peer, 'peer');
+        writer.u32(conversationSequence, 'conversation_sequence', nonZero: true);
       case OpenQspMessage(:final sequence, :final conversationSequence, :final createdAt, :final author, :final recipient, :final body):
         writer.u32(sequence, 'sequence', nonZero: true);
         writer.u32(conversationSequence, 'conversation_sequence', nonZero: true);
@@ -81,6 +84,8 @@ final class OpenQspCodec {
         return OpenQspGetNewBulletins(since: r.u32('since'), max: r.rangedU8('max', 1, 20));
       case OpenQspOperation.getBulletin: return OpenQspGetBulletin(r.u32('sequence', nonZero: true));
       case OpenQspOperation.getCapabilities: return const OpenQspGetCapabilities();
+      case OpenQspOperation.getMessage:
+        return OpenQspGetMessage(peer: r.callsign('peer'), conversationSequence: r.u32('conversation_sequence', nonZero: true));
       case OpenQspOperation.message:
         return OpenQspMessage(
           sequence: r.u32('sequence', nonZero: true),
@@ -117,7 +122,8 @@ bool _isRetrieval(OpenQspOperation op) => op == OpenQspOperation.getNewMessages 
 OpenQspOperation _operationFor(OpenQspFrameObject object) => switch (object) {
   OpenQspSendMessage() => OpenQspOperation.sendMessage, OpenQspGetNewMessages() => OpenQspOperation.getNewMessages,
   OpenQspGetNewBulletins() => OpenQspOperation.getNewBulletins, OpenQspGetBulletin() => OpenQspOperation.getBulletin,
-  OpenQspGetCapabilities() => OpenQspOperation.getCapabilities, OpenQspMessage() => OpenQspOperation.message,
+  OpenQspGetCapabilities() => OpenQspOperation.getCapabilities, OpenQspGetMessage() => OpenQspOperation.getMessage,
+  OpenQspMessage() => OpenQspOperation.message,
   OpenQspBulletinHeader() => OpenQspOperation.bulletinHeader, OpenQspBulletin() => OpenQspOperation.bulletin,
   OpenQspEnd() => OpenQspOperation.end, OpenQspStored() => OpenQspOperation.stored,
   OpenQspError() => OpenQspOperation.error, OpenQspCapabilities() => OpenQspOperation.capabilities,
