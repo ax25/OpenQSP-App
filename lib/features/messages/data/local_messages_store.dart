@@ -184,6 +184,7 @@ final class PreferencesLocalMessagesStore implements LocalMessagesStore {
     'to': message.to,
     'body': message.body,
     'created_at': message.createdAt.toUtc().toIso8601String(),
+    'conversation_sequence': message.conversationSequence,
     'delivery_status': message.deliveryStatus.name,
     'delivered_at': message.deliveredAt?.toUtc().toIso8601String(),
   };
