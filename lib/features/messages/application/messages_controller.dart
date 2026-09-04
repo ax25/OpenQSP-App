@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../../notifications/data/local_message_notification_service.dart';
 import '../data/conversation_visibility_store.dart';
 import '../data/local_messages_store.dart';
 import '../data/messages_transport.dart';
@@ -306,6 +307,12 @@ class MessagesController extends ChangeNotifier {
             unawaited(_markOpenConversationRead(peer));
           } else {
             _unreadByPeer[peer] = (_unreadByPeer[peer] ?? 0) + 1;
+            unawaited(
+              LocalMessageNotificationService.instance.showIncomingMessage(
+                peer: peer,
+                body: message.body,
+              ),
+            );
           }
         }
         await localStore.upsert(callsign, message);
