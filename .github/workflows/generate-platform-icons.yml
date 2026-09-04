@@ -32,14 +32,17 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           from PIL import Image
+          import base64
+          import io
 
-          # Use the approved Android launcher artwork already committed in this PR
-          # as the canonical raster source for the remaining platform assets.
           source_path = Path('android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png')
-          source = Image.open(source_path).convert('RGB')
+          raw = source_path.read_bytes()
+          try:
+              source = Image.open(io.BytesIO(raw)).convert('RGB')
+          except Exception:
+              # Be tolerant of an asset accidentally stored as base64 text.
+              source = Image.open(io.BytesIO(base64.b64decode(raw))).convert('RGB')
 
-          # Render via a high-quality intermediate so every target is produced from
-          # the same artwork rather than repeatedly resampling smaller variants.
           master = source.resize((1024, 1024), Image.Resampling.LANCZOS)
 
           ios_dir = Path('ios/Runner/Assets.xcassets/AppIcon.appiconset')
@@ -69,9 +72,8 @@ jobs:
               image = master if size == 1024 else master.resize((size, size), Image.Resampling.LANCZOS)
               image.save(mac_dir / f'app_icon_{size}.png', format='PNG', optimize=True)
 
-          windows_icon = Path('windows/runner/resources/app_icon.ico')
           master.save(
-              windows_icon,
+              Path('windows/runner/resources/app_icon.ico'),
               format='ICO',
               sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
           )
