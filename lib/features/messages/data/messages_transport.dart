@@ -31,7 +31,10 @@ abstract interface class MessagesRepository {
 }
 
 class SessionAwareMessagesRepository
-    implements MessagesRepository, MessagesSyncCursorNamespace {
+    implements
+        MessagesRepository,
+        MessagesSyncCursorNamespace,
+        MissingMessageRepository {
   SessionAwareMessagesRepository({
     required this.delegate,
     required this.onAuthenticationRequired,
@@ -95,6 +98,25 @@ class SessionAwareMessagesRepository
   Future<SyncBatch> sync({required String token, String? cursor}) => _guard(
     () => delegate.sync(token: token, cursor: cursor),
   );
+
+  @override
+  Future<InternetMessage> getMessage({
+    required String peer,
+    required int conversationSequence,
+    required String token,
+  }) {
+    final missing = delegate;
+    if (missing is! MissingMessageRepository) {
+      throw UnsupportedError('Selective message download is not supported');
+    }
+    return _guard(
+      () => missing.getMessage(
+        peer: peer,
+        conversationSequence: conversationSequence,
+        token: token,
+      ),
+    );
+  }
 }
 
 abstract interface class RetryableMessagesRepository {
