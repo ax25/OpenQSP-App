@@ -1033,8 +1033,11 @@ class _TrafficArrowPainter extends CustomPainter {
     final tailY = upward ? bottom : top;
     canvas.drawLine(Offset(centerX, tailY), Offset(centerX, headY), paint);
     final wingY = upward ? headY + 4.0 : headY - 4.0;
-    canvas.drawLine(Offset(centerX, headY), Offset(centerX - 4.0, wingY), paint);
-    canvas.drawLine(Offset(centerX, headY), Offset(centerX + 4.0, wingY), paint);
+    final headPath = Path()
+      ..moveTo(centerX - 4.0, wingY)
+      ..lineTo(centerX, headY)
+      ..lineTo(centerX + 4.0, wingY);
+    canvas.drawPath(headPath, paint);
   }
 
   @override
