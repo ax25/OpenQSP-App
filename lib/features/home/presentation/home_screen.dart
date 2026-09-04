@@ -730,7 +730,7 @@ class _TransportSelectorBody extends StatelessWidget {
   }
 }
 
-class _TransportStatus extends StatelessWidget {
+class _TransportStatus extends StatefulWidget {
   const _TransportStatus({
     required this.aprsSession,
     required this.internetState,
@@ -742,16 +742,125 @@ class _TransportStatus extends StatelessWidget {
   final VoidCallback onInternetRetry;
 
   @override
+  State<_TransportStatus> createState() => _TransportStatusState();
+}
+
+class _TransportStatusState extends State<_TransportStatus> {
+  static const _activityVisibleDuration = Duration(milliseconds: 700);
+
+  Object? _lastTrafficEntry;
+  Timer? _txTimer;
+  Timer? _rxTimer;
+  bool _showTx = false;
+  bool _showRx = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _attach(widget.aprsSession);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TransportStatus oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.aprsSession == widget.aprsSession) return;
+    _detach(oldWidget.aprsSession);
+    _attach(widget.aprsSession);
+  }
+
+  void _attach(AprsSessionController? session) {
+    final entries = session?.tncController.aprsConsoleEntries;
+    _lastTrafficEntry = entries == null || entries.isEmpty ? null : entries.last;
+    session?.addListener(_sessionChanged);
+  }
+
+  void _detach(AprsSessionController? session) {
+    session?.removeListener(_sessionChanged);
+    _txTimer?.cancel();
+    _rxTimer?.cancel();
+    _txTimer = null;
+    _rxTimer = null;
+    _showTx = false;
+    _showRx = false;
+    _lastTrafficEntry = null;
+  }
+
+  void _sessionChanged() {
+    final session = widget.aprsSession;
+    if (session == null || !session.active) {
+      if (_showTx || _showRx) {
+        _txTimer?.cancel();
+        _rxTimer?.cancel();
+        _txTimer = null;
+        _rxTimer = null;
+        if (mounted) {
+          setState(() {
+            _showTx = false;
+            _showRx = false;
+          });
+        }
+      }
+      return;
+    }
+
+    final entries = session.tncController.aprsConsoleEntries;
+    if (entries.isEmpty) {
+      _lastTrafficEntry = null;
+      return;
+    }
+    final latest = entries.last;
+    if (identical(latest, _lastTrafficEntry)) return;
+    _lastTrafficEntry = latest;
+
+    switch (latest.direction.name) {
+      case 'tx':
+        _flashTx();
+      case 'rx':
+        _flashRx();
+    }
+  }
+
+  void _flashTx() {
+    _txTimer?.cancel();
+    if (mounted && !_showTx) setState(() => _showTx = true);
+    _txTimer = Timer(_activityVisibleDuration, () {
+      _txTimer = null;
+      if (mounted && _showTx) setState(() => _showTx = false);
+    });
+  }
+
+  void _flashRx() {
+    _rxTimer?.cancel();
+    if (mounted && !_showRx) setState(() => _showRx = true);
+    _rxTimer = Timer(_activityVisibleDuration, () {
+      _rxTimer = null;
+      if (mounted && _showRx) setState(() => _showRx = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _detach(widget.aprsSession);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final session = aprsSession;
+    final session = widget.aprsSession;
     if (session == null) {
-      return _Status(state: internetState, onRetry: onInternetRetry);
+      return _Status(
+        state: widget.internetState,
+        onRetry: widget.onInternetRetry,
+      );
     }
     return AnimatedBuilder(
       animation: session,
       builder: (context, _) {
         if (!session.active) {
-          return _Status(state: internetState, onRetry: onInternetRetry);
+          return _Status(
+            state: widget.internetState,
+            onRetry: widget.onInternetRetry,
+          );
         }
         final reachable = session.serverReachable;
         final slow = session.state == AprsSessionState.slow;
@@ -787,6 +896,33 @@ class _TransportStatus extends StatelessWidget {
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: statusColor,
                         fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    AnimatedSize(
+                      duration: const Duration(milliseconds: 120),
+                      curve: Curves.easeOut,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_showTx) ...[
+                            const SizedBox(width: 5),
+                            const Icon(
+                              Icons.arrow_upward_rounded,
+                              key: Key('aprsTxActivity'),
+                              size: 18,
+                              color: Colors.red,
+                            ),
+                          ],
+                          if (_showRx) ...[
+                            const SizedBox(width: 3),
+                            const Icon(
+                              Icons.arrow_downward_rounded,
+                              key: Key('aprsRxActivity'),
+                              size: 18,
+                              color: Colors.green,
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
