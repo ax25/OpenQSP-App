@@ -730,7 +730,7 @@ class _TransportSelectorBody extends StatelessWidget {
   }
 }
 
-class _TransportStatus extends StatelessWidget {
+class _TransportStatus extends StatefulWidget {
   const _TransportStatus({
     required this.aprsSession,
     required this.internetState,
@@ -742,16 +742,155 @@ class _TransportStatus extends StatelessWidget {
   final VoidCallback onInternetRetry;
 
   @override
+  State<_TransportStatus> createState() => _TransportStatusState();
+}
+
+class _TransportStatusState extends State<_TransportStatus> {
+  static const _activityVisibleDuration = Duration(milliseconds: 700);
+  static const _txColor = Color(0xFFB23A32);
+  static const _rxGeneralColor = Color(0xFF3F6FAE);
+  static const _rxLocalColor = Color(0xFF2E8B57);
+  static const _rxDigipeatedColor = Color(0xFFC18A1B);
+
+  Object? _lastTrafficEntry;
+  Timer? _txTimer;
+  Timer? _rxTimer;
+  bool _showTx = false;
+  Color? _rxColor;
+
+  @override
+  void initState() {
+    super.initState();
+    _attach(widget.aprsSession);
+  }
+
+  @override
+  void didUpdateWidget(covariant _TransportStatus oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.aprsSession == widget.aprsSession) return;
+    _detach(oldWidget.aprsSession);
+    _attach(widget.aprsSession);
+  }
+
+  void _attach(AprsSessionController? session) {
+    final entries = session?.tncController.aprsConsoleEntries;
+    _lastTrafficEntry = entries == null || entries.isEmpty ? null : entries.last;
+    session?.addListener(_sessionChanged);
+  }
+
+  void _detach(AprsSessionController? session) {
+    session?.removeListener(_sessionChanged);
+    _txTimer?.cancel();
+    _rxTimer?.cancel();
+    _txTimer = null;
+    _rxTimer = null;
+    _showTx = false;
+    _rxColor = null;
+    _lastTrafficEntry = null;
+  }
+
+  void _sessionChanged() {
+    final session = widget.aprsSession;
+    if (session == null || !session.active) {
+      if (_showTx || _rxColor != null) {
+        _txTimer?.cancel();
+        _rxTimer?.cancel();
+        _txTimer = null;
+        _rxTimer = null;
+        if (mounted) {
+          setState(() {
+            _showTx = false;
+            _rxColor = null;
+          });
+        }
+      }
+      return;
+    }
+
+    final entries = session.tncController.aprsConsoleEntries;
+    if (entries.isEmpty) {
+      _lastTrafficEntry = null;
+      return;
+    }
+    final latest = entries.last;
+    if (identical(latest, _lastTrafficEntry)) return;
+    _lastTrafficEntry = latest;
+
+    switch (latest.direction.name) {
+      case 'tx':
+        _flashTx();
+      case 'rx':
+        _flashRx(_rxColorFor(latest, session));
+    }
+  }
+
+  Color _rxColorFor(dynamic entry, AprsSessionController session) {
+    final controller = session.tncController;
+    final call = controller.sourceCallsign?.trim().toUpperCase();
+    final localIdentity = call == null || call.isEmpty
+        ? null
+        : controller.aprsSsid == 0
+        ? call
+        : '$call-${controller.aprsSsid}';
+
+    if (localIdentity == null) return _rxGeneralColor;
+
+    final source = entry.source.trim().toUpperCase();
+    final destination = entry.destination.trim().toUpperCase();
+    final via = entry.via.trim().toUpperCase();
+
+    // A packet sourced by us and received back through a path is a
+    // digipeated/relayed copy of one of our own transmissions.
+    if (source == localIdentity && via != 'RF') {
+      return _rxDigipeatedColor;
+    }
+    if (destination == localIdentity) {
+      return _rxLocalColor;
+    }
+    return _rxGeneralColor;
+  }
+
+  void _flashTx() {
+    _txTimer?.cancel();
+    if (mounted && !_showTx) setState(() => _showTx = true);
+    _txTimer = Timer(_activityVisibleDuration, () {
+      _txTimer = null;
+      if (mounted && _showTx) setState(() => _showTx = false);
+    });
+  }
+
+  void _flashRx(Color color) {
+    _rxTimer?.cancel();
+    if (mounted && _rxColor != color) setState(() => _rxColor = color);
+    _rxTimer = Timer(_activityVisibleDuration, () {
+      _rxTimer = null;
+      if (mounted && _rxColor != null) setState(() => _rxColor = null);
+    });
+  }
+
+  @override
+  void dispose() {
+    _detach(widget.aprsSession);
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final session = aprsSession;
+    final session = widget.aprsSession;
     if (session == null) {
-      return _Status(state: internetState, onRetry: onInternetRetry);
+      return _Status(
+        state: widget.internetState,
+        onRetry: widget.onInternetRetry,
+      );
     }
     return AnimatedBuilder(
       animation: session,
       builder: (context, _) {
         if (!session.active) {
-          return _Status(state: internetState, onRetry: onInternetRetry);
+          return _Status(
+            state: widget.internetState,
+            onRetry: widget.onInternetRetry,
+          );
         }
         final reachable = session.serverReachable;
         final slow = session.state == AprsSessionState.slow;
@@ -789,6 +928,45 @@ class _TransportStatus extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
+                    const SizedBox(width: 5),
+                    SizedBox(
+                      width: 41,
+                      height: 18,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 18,
+                            child: Center(
+                              child: Opacity(
+                                opacity: _showTx ? 1 : 0,
+                                child: const _TrafficArrow(
+                                  key: Key('aprsTxActivity'),
+                                  upward: true,
+                                  color: _txColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 1),
+                          SizedBox(
+                            width: 20,
+                            height: 18,
+                            child: Center(
+                              child: Opacity(
+                                opacity: _rxColor == null ? 0 : 1,
+                                child: _TrafficArrow(
+                                  key: const Key('aprsRxActivity'),
+                                  upward: false,
+                                  color: _rxColor ?? _rxGeneralColor,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
                 if (reachable) ...[
@@ -810,6 +988,61 @@ class _TransportStatus extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+class _TrafficArrow extends StatelessWidget {
+  const _TrafficArrow({
+    super.key,
+    required this.upward,
+    required this.color,
+  });
+
+  final bool upward;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 18,
+      child: CustomPaint(
+        painter: _TrafficArrowPainter(upward: upward, color: color),
+      ),
+    );
+  }
+}
+
+class _TrafficArrowPainter extends CustomPainter {
+  const _TrafficArrowPainter({required this.upward, required this.color});
+
+  final bool upward;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.8
+      ..strokeCap = StrokeCap.butt
+      ..strokeJoin = StrokeJoin.miter;
+    final centerX = size.width / 2;
+    final top = 3.2;
+    final bottom = size.height - 3.2;
+    final headY = upward ? top : bottom;
+    final tailY = upward ? bottom : top;
+    canvas.drawLine(Offset(centerX, tailY), Offset(centerX, headY), paint);
+    final wingY = upward ? headY + 4.0 : headY - 4.0;
+    final headPath = Path()
+      ..moveTo(centerX - 4.0, wingY)
+      ..lineTo(centerX, headY)
+      ..lineTo(centerX + 4.0, wingY);
+    canvas.drawPath(headPath, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrafficArrowPainter oldDelegate) {
+    return oldDelegate.upward != upward || oldDelegate.color != color;
   }
 }
 
