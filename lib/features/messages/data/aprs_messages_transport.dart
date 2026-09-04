@@ -23,7 +23,8 @@ final class AprsMessagesTransport
         MessagesRepository,
         MessagesRealtimeClient,
         MessagesSyncCursorNamespace,
-        RetryableMessagesRepository {
+        RetryableMessagesRepository,
+        MissingMessageRepository {
   AprsMessagesTransport({
     required this.session,
     required String callsign,
@@ -58,6 +59,7 @@ final class AprsMessagesTransport
   int _lastObservedAprsRejects = 0;
   RealtimeConnectionState? _lastEmittedConnectionState;
   _PendingSync? _pendingSync;
+  _PendingMessageLookup? _pendingLookup;
   int _localSequence = 0;
   int _nextAprsMessageId = 0;
   bool _connected = false;
@@ -157,6 +159,7 @@ final class AprsMessagesTransport
       _lastObservedOpenQspFragments = fragmentCount;
       final pending = _pendingSync;
       pending?.touch(responseTimeout);
+      _pendingLookup?.touch(responseTimeout);
       if (pending != null) {
         session.setActivity(AprsActivityState.gettingNewMessages);
       }
@@ -185,9 +188,30 @@ final class AprsMessagesTransport
           if (pending != null && !pending.completer.isCompleted) {
             pending.completer.completeError(StateError(message));
           }
+        } else if (requestOperation == OpenQspOperation.getMessage.code) {
+          final pending = _pendingLookup;
+          if (pending != null && !pending.completer.isCompleted) {
+            pending.completer.completeError(StateError(message));
+          }
         }
-      case OpenQspMessage(:final sequence):
+      case OpenQspMessage(:final sequence, :final author, :final conversationSequence):
         final message = _fromOpenQspMessage(object);
+        final lookup = _pendingLookup;
+        final isLookupResponse = lookup != null &&
+            author.toUpperCase() == lookup.peer &&
+            conversationSequence == lookup.conversationSequence;
+        if (isLookupResponse) {
+          final index = _messages.indexWhere((existing) => existing.id == message.id);
+          if (index < 0) {
+            _messages.add(message);
+          } else {
+            _messages[index] = message;
+          }
+          lookup.cancelTimeout();
+          if (!lookup.completer.isCompleted) lookup.completer.complete(message);
+          break;
+        }
+
         final pending = _pendingSync;
         String? progressiveCursor;
         if (pending != null) {
@@ -394,6 +418,60 @@ final class AprsMessagesTransport
               session.activityState == AprsActivityState.gettingNewMessages)) {
         session.setActivity(AprsActivityState.idle);
       }
+    }
+  }
+
+  @override
+  Future<InternetMessage> getMessage({
+    required String peer,
+    required int conversationSequence,
+    required String token,
+  }) async {
+    if (_closed || !_serverReachable) {
+      throw StateError('APRS OpenQSP session is not available');
+    }
+    final normalizedPeer = peer.trim().toUpperCase();
+    if (!RegExp(r'^(?=.*[A-Z])(?=.*[0-9])[A-Z0-9]{3,12}$').hasMatch(normalizedPeer)) {
+      throw ArgumentError.value(peer, 'peer', 'Invalid OpenQSP callsign');
+    }
+    if (conversationSequence <= 0 || conversationSequence > 0xffffffff) {
+      throw ArgumentError.value(
+        conversationSequence,
+        'conversationSequence',
+        'Must be a non-zero u32',
+      );
+    }
+
+    final activeSync = _syncInFlight;
+    if (activeSync != null) await activeSync;
+    final activeLookup = _pendingLookup;
+    if (activeLookup != null) {
+      if (activeLookup.peer == normalizedPeer &&
+          activeLookup.conversationSequence == conversationSequence) {
+        return activeLookup.completer.future;
+      }
+      throw StateError('Another APRS message lookup is already in progress');
+    }
+
+    final pending = _PendingMessageLookup(
+      peer: normalizedPeer,
+      conversationSequence: conversationSequence,
+    );
+    _pendingLookup = pending;
+    pending.touch(responseTimeout);
+    try {
+      await _enqueueTx(
+        () => _sendObject(
+          OpenQspGetMessage(
+            peer: normalizedPeer,
+            conversationSequence: conversationSequence,
+          ),
+        ),
+      );
+      return await pending.completer.future;
+    } finally {
+      pending.cancelTimeout();
+      if (identical(_pendingLookup, pending)) _pendingLookup = null;
     }
   }
 
@@ -625,6 +703,11 @@ final class AprsMessagesTransport
     if (sync != null && !sync.completer.isCompleted) {
       sync.completer.completeError(StateError('APRS messages transport closed'));
     }
+    final lookup = _pendingLookup;
+    lookup?.cancelTimeout();
+    if (lookup != null && !lookup.completer.isCompleted) {
+      lookup.completer.completeError(StateError('APRS messages transport closed'));
+    }
     await _events.close();
     await _connections.close();
   }
@@ -719,6 +802,30 @@ final class _PendingSync {
     _timeout = Timer(timeout, () {
       if (!completer.isCompleted) {
         completer.completeError(TimeoutException('APRS OpenQSP response timed out'));
+      }
+    });
+  }
+
+  void cancelTimeout() {
+    _timeout?.cancel();
+    _timeout = null;
+  }
+}
+
+final class _PendingMessageLookup {
+  _PendingMessageLookup({required this.peer, required this.conversationSequence});
+
+  final String peer;
+  final int conversationSequence;
+  final Completer<InternetMessage> completer = Completer<InternetMessage>();
+  Timer? _timeout;
+
+  void touch(Duration timeout) {
+    if (completer.isCompleted) return;
+    _timeout?.cancel();
+    _timeout = Timer(timeout, () {
+      if (!completer.isCompleted) {
+        completer.completeError(TimeoutException('APRS GET_MESSAGE timed out'));
       }
     });
   }

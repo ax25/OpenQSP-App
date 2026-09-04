@@ -101,6 +101,14 @@ abstract interface class RetryableMessagesRepository {
   Future<void> retryMessage(InternetMessage message);
 }
 
+abstract interface class MissingMessageRepository {
+  Future<InternetMessage> getMessage({
+    required String peer,
+    required int conversationSequence,
+    required String token,
+  });
+}
+
 /// Optional capability for repositories whose incremental cursor is not the
 /// Internet `/sync` cursor namespace.
 abstract interface class MessagesSyncCursorNamespace {

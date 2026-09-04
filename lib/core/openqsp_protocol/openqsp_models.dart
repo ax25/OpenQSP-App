@@ -8,6 +8,11 @@ final class OpenQspGetNewMessages extends OpenQspFrameObject { const OpenQspGetN
 final class OpenQspGetNewBulletins extends OpenQspFrameObject { const OpenQspGetNewBulletins({required this.since, required this.max}); final int since, max; }
 final class OpenQspGetBulletin extends OpenQspFrameObject { const OpenQspGetBulletin(this.sequence); final int sequence; }
 final class OpenQspGetCapabilities extends OpenQspFrameObject { const OpenQspGetCapabilities(); }
+final class OpenQspGetMessage extends OpenQspFrameObject {
+  const OpenQspGetMessage({required this.peer, required this.conversationSequence});
+  final String peer;
+  final int conversationSequence;
+}
 final class OpenQspMessage extends OpenQspFrameObject {
   const OpenQspMessage({
     required this.sequence,
