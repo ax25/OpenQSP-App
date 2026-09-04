@@ -4,6 +4,7 @@ enum OpenQspOperation {
   getNewBulletins(0x03),
   getBulletin(0x04),
   getCapabilities(0x05),
+  getMessage(0x06),
   message(0x40),
   bulletinHeader(0x41),
   bulletin(0x42),

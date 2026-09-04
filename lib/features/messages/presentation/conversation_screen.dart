@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../aprs/application/aprs_session_controller.dart';
 import '../../aprs/presentation/aprs_receive_indicator.dart';
 import '../application/messages_controller.dart';
+import '../data/messages_transport.dart';
 import '../domain/message_models.dart';
 import 'message_date_format.dart';
 import 'pending_message_composer.dart';
@@ -27,6 +30,9 @@ class _ConversationScreenState extends State<ConversationScreen>
   final _composer = TextEditingController();
   final _composerFocus = FocusNode();
   final _scrollController = ScrollController();
+  final Set<int> _downloadingMissingSequences = <int>{};
+  final Set<String> _highlightedMessageIds = <String>{};
+  final Map<String, Timer> _highlightTimers = <String, Timer>{};
   bool _loading = true;
   String? _error;
   int _messageCount = 0;
@@ -66,7 +72,7 @@ class _ConversationScreenState extends State<ConversationScreen>
     final hasNewMessage = nextCount > _messageCount;
     _messageCount = nextCount;
     setState(() {});
-    if (hasNewMessage) _scrollToLatest();
+    if (hasNewMessage) _stabilizeInitialBottomScroll();
   }
 
   void _pendingComposerChanged() {
@@ -193,9 +199,59 @@ class _ConversationScreenState extends State<ConversationScreen>
     }
   }
 
+  Future<void> _downloadMissingMessage(int sequence) async {
+    if (_downloadingMissingSequences.contains(sequence)) return;
+    final repository = widget.controller.repository;
+    if (repository is! MissingMessageRepository) {
+      setState(() {
+        _error = 'Selective message download is not supported by this transport.';
+      });
+      return;
+    }
+
+    setState(() {
+      _error = null;
+      _downloadingMissingSequences.add(sequence);
+    });
+    try {
+      final message = await repository.getMessage(
+        peer: widget.remoteCallsign,
+        conversationSequence: sequence,
+        token: widget.controller.token,
+      );
+      await widget.controller.localStore.upsert(
+        widget.controller.callsign,
+        message,
+      );
+      await widget.controller.loadConversations();
+      if (!mounted) return;
+
+      _highlightTimers.remove(message.id)?.cancel();
+      setState(() {
+        _downloadingMissingSequences.remove(sequence);
+        _highlightedMessageIds.add(message.id);
+      });
+      _highlightTimers[message.id] = Timer(const Duration(seconds: 4), () {
+        _highlightTimers.remove(message.id);
+        if (!mounted) return;
+        setState(() => _highlightedMessageIds.remove(message.id));
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _downloadingMissingSequences.remove(sequence);
+        _error = 'Message could not be downloaded: $error';
+      });
+    }
+  }
+
   @override
   void dispose() {
     _initialBottomScrollGeneration++;
+    for (final timer in _highlightTimers.values) {
+      timer.cancel();
+    }
+    _highlightTimers.clear();
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_changed);
     pendingMessageComposer.removeListener(_pendingComposerChanged);
@@ -276,88 +332,123 @@ class _ConversationScreenState extends State<ConversationScreen>
                   itemCount: timeline.length,
                   itemBuilder: (_, index) {
                     final item = timeline[index];
+                    final Widget content;
+                    final Key contentKey;
                     if (item is _MissingConversationMessage) {
-                      return _MissingMessagePlaceholder(
+                      contentKey = ValueKey<String>('missing-${item.sequence}');
+                      content = _MissingMessagePlaceholder(
                         sequence: item.sequence,
+                        downloading: _downloadingMissingSequences.contains(
+                          item.sequence,
+                        ),
+                        onTap: () => _downloadMissingMessage(item.sequence),
                       );
-                    }
-                    final messageItem = item as _ConversationMessage;
-                    final message = messageItem.message;
-                    final sent =
-                        message.directionFor(widget.controller.callsign) ==
-                        MessageDirection.sent;
-                    final colors = Theme.of(context).colorScheme;
-                    return Column(
-                      children: [
-                        if (messageItem.showDate)
-                          Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 10),
-                            child: Text(
-                              formatMessageDateSeparator(message.createdAt),
-                              key: Key('date-${message.id}'),
-                              style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: colors.onSurfaceVariant),
+                    } else {
+                      final messageItem = item as _ConversationMessage;
+                      final message = messageItem.message;
+                      final sent =
+                          message.directionFor(widget.controller.callsign) ==
+                          MessageDirection.sent;
+                      final colors = Theme.of(context).colorScheme;
+                      final highlighted = _highlightedMessageIds.contains(
+                        message.id,
+                      );
+                      contentKey = ValueKey<String>('timeline-message-${message.id}');
+                      content = Column(
+                        children: [
+                          if (messageItem.showDate)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                              child: Text(
+                                formatMessageDateSeparator(message.createdAt),
+                                key: Key('date-${message.id}'),
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(color: colors.onSurfaceVariant),
+                              ),
                             ),
-                          ),
-                        Align(
-                          key: Key('message-${message.id}'),
-                          alignment: sent
-                              ? Alignment.centerRight
-                              : Alignment.centerLeft,
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Flexible(
-                                child: Card(
-                                  color: sent
-                                      ? colors.surfaceContainerHighest
-                                      : colors.primaryContainer,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
+                          Align(
+                            key: Key('message-${message.id}'),
+                            alignment: sent
+                                ? Alignment.centerRight
+                                : Alignment.centerLeft,
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              children: [
+                                Flexible(
+                                  child: AnimatedContainer(
+                                    key: Key('message-highlight-${message.id}'),
+                                    duration: const Duration(milliseconds: 220),
+                                    curve: Curves.easeOut,
+                                    padding: const EdgeInsets.all(2),
+                                    decoration: BoxDecoration(
+                                      color: highlighted
+                                          ? colors.tertiaryContainer
+                                          : Colors.transparent,
+                                      borderRadius: BorderRadius.circular(14),
                                     ),
-                                    child: Text(
-                                      message.body,
-                                      style: TextStyle(
-                                        color: sent
-                                            ? colors.onSurfaceVariant
-                                            : colors.onPrimaryContainer,
+                                    child: Card(
+                                      color: sent
+                                          ? colors.surfaceContainerHighest
+                                          : colors.primaryContainer,
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 10,
+                                        ),
+                                        child: Text(
+                                          message.body,
+                                          style: TextStyle(
+                                            color: sent
+                                                ? colors.onSurfaceVariant
+                                                : colors.onPrimaryContainer,
+                                          ),
+                                        ),
                                       ),
                                     ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 4),
-                              Padding(
-                                padding: const EdgeInsets.only(bottom: 6),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      formatMessageTime(message.createdAt),
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .labelSmall
-                                          ?.copyWith(
-                                            color: colors.onSurfaceVariant,
-                                          ),
-                                    ),
-                                    if (sent) ...[
-                                      const SizedBox(width: 3),
-                                      _MessageStatusIcon(
-                                        message: message,
-                                        controller: widget.controller,
+                                const SizedBox(width: 4),
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        formatMessageTime(message.createdAt),
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .labelSmall
+                                            ?.copyWith(
+                                              color: colors.onSurfaceVariant,
+                                            ),
                                       ),
+                                      if (sent) ...[
+                                        const SizedBox(width: 3),
+                                        _MessageStatusIcon(
+                                          message: message,
+                                          controller: widget.controller,
+                                        ),
+                                      ],
                                     ],
-                                  ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      );
+                    }
+                    return AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 160),
+                      reverseDuration: const Duration(milliseconds: 120),
+                      switchInCurve: Curves.easeIn,
+                      switchOutCurve: Curves.easeOut,
+                      transitionBuilder: (child, animation) => FadeTransition(
+                        opacity: animation,
+                        child: child,
+                      ),
+                      child: KeyedSubtree(key: contentKey, child: content),
                     );
                   },
                 ),
@@ -469,51 +560,77 @@ List<_ConversationTimelineItem> _buildConversationTimeline(
 }
 
 class _MissingMessagePlaceholder extends StatelessWidget {
-  const _MissingMessagePlaceholder({required this.sequence});
+  const _MissingMessagePlaceholder({
+    required this.sequence,
+    required this.downloading,
+    required this.onTap,
+  });
 
   final int sequence;
+  final bool downloading;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return Semantics(
-      label: 'Mensaje no descargado, secuencia $sequence',
+      button: !downloading,
+      label: downloading
+          ? 'Downloading missing message, sequence $sequence'
+          : 'Message not downloaded, sequence $sequence. Tap to download.',
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Center(
-          child: Container(
-            key: Key('missing-message-$sequence'),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-            decoration: BoxDecoration(
-              color: colors.surfaceContainerLow,
+          child: Material(
+            color: colors.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              key: Key('missing-message-$sequence'),
               borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: colors.outlineVariant),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.arrow_downward,
-                  size: 16,
-                  color: colors.onSurfaceVariant,
+              onTap: downloading ? null : onTap,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: colors.outlineVariant),
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  'Mensaje no descargado',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                    fontStyle: FontStyle.italic,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (downloading)
+                      SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(
+                          key: Key('missing-message-spinner-$sequence'),
+                          strokeWidth: 2,
+                        ),
+                      )
+                    else
+                      Icon(
+                        Icons.arrow_downward,
+                        key: Key('missing-message-download-$sequence'),
+                        size: 16,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    const SizedBox(width: 6),
+                    Text(
+                      downloading ? 'Downloading message' : 'Message not downloaded',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '#$sequence',
+                      key: Key('missing-message-sequence-$sequence'),
+                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 6),
-                Text(
-                  '#$sequence',
-                  key: Key('missing-message-sequence-$sequence'),
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ),
