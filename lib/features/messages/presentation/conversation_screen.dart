@@ -353,7 +353,7 @@ class _ConversationScreenState extends State<ConversationScreen>
                       final highlighted = _highlightedMessageIds.contains(
                         message.id,
                       );
-                      contentKey = ValueKey<String>('message-${message.id}');
+                      contentKey = ValueKey<String>('timeline-message-${message.id}');
                       content = Column(
                         children: [
                           if (messageItem.showDate)
