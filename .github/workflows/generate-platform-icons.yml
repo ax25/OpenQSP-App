@@ -31,10 +31,11 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          from PIL import Image
+          from PIL import Image, ImageFile
           import base64
           import io
 
+          ImageFile.LOAD_TRUNCATED_IMAGES = True
           encoded = ''.join(Path('.github/icon-source.b64').read_text().split())
           encoded += '=' * (-len(encoded) % 4)
           source = Image.open(io.BytesIO(base64.b64decode(encoded))).convert('RGB')
