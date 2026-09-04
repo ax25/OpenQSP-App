@@ -34,8 +34,8 @@ class SettingsScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  SingleChildScrollView(
-                    padding: const EdgeInsets.all(24),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 12, 12, 16),
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 920),
