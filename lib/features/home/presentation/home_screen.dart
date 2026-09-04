@@ -747,10 +747,10 @@ class _TransportStatus extends StatefulWidget {
 
 class _TransportStatusState extends State<_TransportStatus> {
   static const _activityVisibleDuration = Duration(milliseconds: 700);
-  static const _txColor = Color(0xFFB3261E);
-  static const _rxGeneralColor = Color(0xFF315A8A);
-  static const _rxLocalColor = Color(0xFF2F6B3A);
-  static const _rxDigipeatedColor = Color(0xFF9A6A00);
+  static const _txColor = Color(0xFFB23A32);
+  static const _rxGeneralColor = Color(0xFF3F6FAE);
+  static const _rxLocalColor = Color(0xFF2E8B57);
+  static const _rxDigipeatedColor = Color(0xFFC18A1B);
 
   Object? _lastTrafficEntry;
   Timer? _txTimer;
