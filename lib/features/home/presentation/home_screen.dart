@@ -898,30 +898,42 @@ class _TransportStatusState extends State<_TransportStatus> {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    AnimatedSize(
-                      duration: const Duration(milliseconds: 120),
-                      curve: Curves.easeOut,
+                    const SizedBox(width: 5),
+                    SizedBox(
+                      width: 41,
+                      height: 18,
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          if (_showTx) ...[
-                            const SizedBox(width: 5),
-                            const Icon(
-                              Icons.arrow_upward_rounded,
-                              key: Key('aprsTxActivity'),
-                              size: 18,
-                              color: Colors.red,
+                          SizedBox(
+                            width: 20,
+                            height: 18,
+                            child: Center(
+                              child: Opacity(
+                                opacity: _showTx ? 1 : 0,
+                                child: const _TrafficArrow(
+                                  key: Key('aprsTxActivity'),
+                                  upward: true,
+                                  color: Colors.red,
+                                ),
+                              ),
                             ),
-                          ],
-                          if (_showRx) ...[
-                            const SizedBox(width: 3),
-                            const Icon(
-                              Icons.arrow_downward_rounded,
-                              key: Key('aprsRxActivity'),
-                              size: 18,
-                              color: Colors.green,
+                          ),
+                          const SizedBox(width: 1),
+                          SizedBox(
+                            width: 20,
+                            height: 18,
+                            child: Center(
+                              child: Opacity(
+                                opacity: _showRx ? 1 : 0,
+                                child: const _TrafficArrow(
+                                  key: Key('aprsRxActivity'),
+                                  upward: false,
+                                  color: Colors.green,
+                                ),
+                              ),
                             ),
-                          ],
+                          ),
                         ],
                       ),
                     ),
@@ -946,6 +958,58 @@ class _TransportStatusState extends State<_TransportStatus> {
         );
       },
     );
+  }
+}
+
+class _TrafficArrow extends StatelessWidget {
+  const _TrafficArrow({
+    super.key,
+    required this.upward,
+    required this.color,
+  });
+
+  final bool upward;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.square(
+      dimension: 18,
+      child: CustomPaint(
+        painter: _TrafficArrowPainter(upward: upward, color: color),
+      ),
+    );
+  }
+}
+
+class _TrafficArrowPainter extends CustomPainter {
+  const _TrafficArrowPainter({required this.upward, required this.color});
+
+  final bool upward;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3.4
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final centerX = size.width / 2;
+    final top = 3.0;
+    final bottom = size.height - 3.0;
+    final headY = upward ? top : bottom;
+    final tailY = upward ? bottom : top;
+    canvas.drawLine(Offset(centerX, tailY), Offset(centerX, headY), paint);
+    final wingY = upward ? headY + 4.3 : headY - 4.3;
+    canvas.drawLine(Offset(centerX, headY), Offset(centerX - 4.3, wingY), paint);
+    canvas.drawLine(Offset(centerX, headY), Offset(centerX + 4.3, wingY), paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _TrafficArrowPainter oldDelegate) {
+    return oldDelegate.upward != upward || oldDelegate.color != color;
   }
 }
 
