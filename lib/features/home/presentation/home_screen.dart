@@ -11,7 +11,9 @@ import '../../auth/data/auth_client.dart';
 import '../../messages/application/messages_controller.dart';
 import '../../messages/data/aprs_messages_transport.dart';
 import '../../messages/data/messages_transport.dart';
+import '../../messages/presentation/conversation_screen.dart';
 import '../../messages/presentation/messages_screen.dart';
+import '../../notifications/data/local_message_notification_service.dart';
 
 enum ServerConnectionState {
   checking('Checking server...'),
@@ -66,6 +68,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    LocalMessageNotificationService.instance.setTapHandler(_onNotificationTap);
     widget.aprsSession?.addListener(_onAprsSessionChanged);
     _checkServer();
   }
@@ -223,6 +226,57 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return controller;
   }
 
+  Future<void> _onNotificationTap(String peer) async {
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    final normalized = peer.trim().toUpperCase();
+    if (normalized.isEmpty || normalized == widget.callsign.toUpperCase()) return;
+
+    if (_aprsActive) {
+      final session = widget.aprsSession;
+      if (session == null || !session.serverReachable) return;
+      final controller = await _ensureAprsMessagesController(session);
+      if (!mounted || controller == null) return;
+      _openNotificationConversation(
+        controller,
+        normalized,
+        aprsSession: session,
+      );
+      return;
+    }
+
+    if (widget.authSession.tokenFor(widget.callsign) == null) {
+      final gate = await widget.authSession.authenticateStoredToken(
+        widget.callsign,
+      );
+      if (!mounted || gate != AuthGateResult.connected) return;
+    }
+    final controller = await _ensureInternetMessagesController();
+    if (!mounted || controller == null) return;
+    _openNotificationConversation(controller, normalized);
+  }
+
+  void _openNotificationConversation(
+    MessagesController controller,
+    String peer, {
+    AprsSessionController? aprsSession,
+  }) {
+    if (aprsSession == null) {
+      setState(() => _serverState = ServerConnectionState.connected);
+    }
+    Navigator.of(context)
+        .push<void>(
+          MaterialPageRoute(
+            builder: (_) => ConversationScreen(
+              controller: controller,
+              remoteCallsign: peer,
+              aprsSession: aprsSession,
+            ),
+          ),
+        )
+        .whenComplete(controller.closeConversation);
+  }
+
   Future<void> _onMessagesTap() async {
     if (_aprsActive) {
       final session = widget.aprsSession;
@@ -376,6 +430,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    LocalMessageNotificationService.instance.setTapHandler(null);
     WidgetsBinding.instance.removeObserver(this);
     widget.aprsSession?.removeListener(_onAprsSessionChanged);
     final controller = _messagesController;
