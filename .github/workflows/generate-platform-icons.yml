@@ -35,7 +35,9 @@ jobs:
           import base64
           import io
 
-          source = Image.open(io.BytesIO(base64.b64decode(Path('.github/icon-source.b64').read_text().strip()))).convert('RGB')
+          encoded = ''.join(Path('.github/icon-source.b64').read_text().split())
+          encoded += '=' * (-len(encoded) % 4)
+          source = Image.open(io.BytesIO(base64.b64decode(encoded))).convert('RGB')
           master = source.resize((1024, 1024), Image.Resampling.LANCZOS)
 
           android_icons = {
