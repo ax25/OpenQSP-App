@@ -1,1 +1,0 @@
-# OpenQSP branding
