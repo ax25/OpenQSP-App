@@ -747,6 +747,10 @@ class _TransportStatus extends StatefulWidget {
 
 class _TransportStatusState extends State<_TransportStatus> {
   static const _activityVisibleDuration = Duration(milliseconds: 700);
+  static const _txColor = Color(0xFFB3261E);
+  static const _rxGeneralColor = Color(0xFF315A8A);
+  static const _rxLocalColor = Color(0xFF2F6B3A);
+  static const _rxDigipeatedColor = Color(0xFF9A6A00);
 
   Object? _lastTrafficEntry;
   Timer? _txTimer;
@@ -829,7 +833,7 @@ class _TransportStatusState extends State<_TransportStatus> {
         ? call
         : '$call-${controller.aprsSsid}';
 
-    if (localIdentity == null) return Colors.blue;
+    if (localIdentity == null) return _rxGeneralColor;
 
     final source = entry.source.trim().toUpperCase();
     final destination = entry.destination.trim().toUpperCase();
@@ -838,12 +842,12 @@ class _TransportStatusState extends State<_TransportStatus> {
     // A packet sourced by us and received back through a path is a
     // digipeated/relayed copy of one of our own transmissions.
     if (source == localIdentity && via != 'RF') {
-      return Colors.amber;
+      return _rxDigipeatedColor;
     }
     if (destination == localIdentity) {
-      return Colors.green;
+      return _rxLocalColor;
     }
-    return Colors.blue;
+    return _rxGeneralColor;
   }
 
   void _flashTx() {
@@ -940,7 +944,7 @@ class _TransportStatusState extends State<_TransportStatus> {
                                 child: const _TrafficArrow(
                                   key: Key('aprsTxActivity'),
                                   upward: true,
-                                  color: Colors.red,
+                                  color: _txColor,
                                 ),
                               ),
                             ),
@@ -955,7 +959,7 @@ class _TransportStatusState extends State<_TransportStatus> {
                                 child: _TrafficArrow(
                                   key: const Key('aprsRxActivity'),
                                   upward: false,
-                                  color: _rxColor ?? Colors.blue,
+                                  color: _rxColor ?? _rxGeneralColor,
                                 ),
                               ),
                             ),
@@ -1019,18 +1023,18 @@ class _TrafficArrowPainter extends CustomPainter {
     final paint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 3.4
-      ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round;
+      ..strokeWidth = 2.8
+      ..strokeCap = StrokeCap.butt
+      ..strokeJoin = StrokeJoin.miter;
     final centerX = size.width / 2;
-    final top = 3.0;
-    final bottom = size.height - 3.0;
+    final top = 3.2;
+    final bottom = size.height - 3.2;
     final headY = upward ? top : bottom;
     final tailY = upward ? bottom : top;
     canvas.drawLine(Offset(centerX, tailY), Offset(centerX, headY), paint);
-    final wingY = upward ? headY + 4.3 : headY - 4.3;
-    canvas.drawLine(Offset(centerX, headY), Offset(centerX - 4.3, wingY), paint);
-    canvas.drawLine(Offset(centerX, headY), Offset(centerX + 4.3, wingY), paint);
+    final wingY = upward ? headY + 4.0 : headY - 4.0;
+    canvas.drawLine(Offset(centerX, headY), Offset(centerX - 4.0, wingY), paint);
+    canvas.drawLine(Offset(centerX, headY), Offset(centerX + 4.0, wingY), paint);
   }
 
   @override
