@@ -38,7 +38,7 @@ class LocalMessageNotificationService {
       );
 
       await _plugin.initialize(
-        settings,
+        settings: settings,
         onDidReceiveNotificationResponse: (response) {
           final peer = response.payload?.trim().toUpperCase();
           if (peer == null || peer.isEmpty) return;
@@ -107,10 +107,10 @@ class LocalMessageNotificationService {
 
     try {
       await _plugin.show(
-        _nextId++,
-        'Message from $normalizedPeer',
-        body,
-        details,
+        id: _nextId++,
+        title: 'Message from $normalizedPeer',
+        body: body,
+        notificationDetails: details,
         payload: normalizedPeer,
       );
     } on Object catch (error) {
