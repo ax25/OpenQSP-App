@@ -72,7 +72,7 @@ class _ConversationScreenState extends State<ConversationScreen>
     final hasNewMessage = nextCount > _messageCount;
     _messageCount = nextCount;
     setState(() {});
-    if (hasNewMessage) _scrollToLatest();
+    if (hasNewMessage) _stabilizeInitialBottomScroll();
   }
 
   void _pendingComposerChanged() {
