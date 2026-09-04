@@ -31,7 +31,10 @@ abstract interface class MessagesRepository {
 }
 
 class SessionAwareMessagesRepository
-    implements MessagesRepository, MessagesSyncCursorNamespace {
+    implements
+        MessagesRepository,
+        MessagesSyncCursorNamespace,
+        MissingMessageRepository {
   SessionAwareMessagesRepository({
     required this.delegate,
     required this.onAuthenticationRequired,
@@ -95,6 +98,26 @@ class SessionAwareMessagesRepository
   Future<SyncBatch> sync({required String token, String? cursor}) => _guard(
     () => delegate.sync(token: token, cursor: cursor),
   );
+
+  @override
+  Future<InternetMessage> getMessage({
+    required String peer,
+    required int conversationSequence,
+    required String token,
+  }) {
+    final missing = delegate;
+    if (missing is! MissingMessageRepository) {
+      throw UnsupportedError('Selective message download is not supported');
+    }
+    final selective = missing as MissingMessageRepository;
+    return _guard(
+      () => selective.getMessage(
+        peer: peer,
+        conversationSequence: conversationSequence,
+        token: token,
+      ),
+    );
+  }
 }
 
 abstract interface class RetryableMessagesRepository {
@@ -107,6 +130,24 @@ abstract interface class MissingMessageRepository {
     required int conversationSequence,
     required String token,
   });
+}
+
+extension MissingMessageRepositoryAccess on MessagesRepository {
+  Future<InternetMessage> getMessage({
+    required String peer,
+    required int conversationSequence,
+    required String token,
+  }) {
+    final repository = this;
+    if (repository is! MissingMessageRepository) {
+      throw UnsupportedError('Selective message download is not supported');
+    }
+    return (repository as MissingMessageRepository).getMessage(
+      peer: peer,
+      conversationSequence: conversationSequence,
+      token: token,
+    );
+  }
 }
 
 /// Optional capability for repositories whose incremental cursor is not the

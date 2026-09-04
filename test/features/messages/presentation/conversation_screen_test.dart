@@ -80,7 +80,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('missing-message-11')), findsOneWidget);
-    expect(find.text('Mensaje no descargado'), findsOneWidget);
+    expect(find.text('Message not downloaded'), findsOneWidget);
     expect(find.text('#11'), findsOneWidget);
     expect(find.byKey(const Key('missing-message-1')), findsNothing);
     expect(find.byKey(const Key('missing-message-9')), findsNothing);
