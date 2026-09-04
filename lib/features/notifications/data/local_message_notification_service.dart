@@ -32,7 +32,7 @@ class LocalMessageNotificationService {
 
     try {
       const settings = InitializationSettings(
-        android: AndroidInitializationSettings('ic_launcher'),
+        android: AndroidInitializationSettings('ic_notification'),
         iOS: DarwinInitializationSettings(),
         macOS: DarwinInitializationSettings(),
       );
@@ -99,6 +99,7 @@ class LocalMessageNotificationService {
         channelDescription: 'Notifications for new OpenQSP messages',
         importance: Importance.high,
         priority: Priority.high,
+        icon: 'ic_notification',
       ),
       iOS: DarwinNotificationDetails(),
       macOS: DarwinNotificationDetails(),
