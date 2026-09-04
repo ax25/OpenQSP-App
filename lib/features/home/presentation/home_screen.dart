@@ -752,7 +752,7 @@ class _TransportStatusState extends State<_TransportStatus> {
   Timer? _txTimer;
   Timer? _rxTimer;
   bool _showTx = false;
-  bool _showRx = false;
+  Color? _rxColor;
 
   @override
   void initState() {
@@ -781,14 +781,14 @@ class _TransportStatusState extends State<_TransportStatus> {
     _txTimer = null;
     _rxTimer = null;
     _showTx = false;
-    _showRx = false;
+    _rxColor = null;
     _lastTrafficEntry = null;
   }
 
   void _sessionChanged() {
     final session = widget.aprsSession;
     if (session == null || !session.active) {
-      if (_showTx || _showRx) {
+      if (_showTx || _rxColor != null) {
         _txTimer?.cancel();
         _rxTimer?.cancel();
         _txTimer = null;
@@ -796,7 +796,7 @@ class _TransportStatusState extends State<_TransportStatus> {
         if (mounted) {
           setState(() {
             _showTx = false;
-            _showRx = false;
+            _rxColor = null;
           });
         }
       }
@@ -816,8 +816,34 @@ class _TransportStatusState extends State<_TransportStatus> {
       case 'tx':
         _flashTx();
       case 'rx':
-        _flashRx();
+        _flashRx(_rxColorFor(latest, session));
     }
+  }
+
+  Color _rxColorFor(dynamic entry, AprsSessionController session) {
+    final controller = session.tncController;
+    final call = controller.sourceCallsign?.trim().toUpperCase();
+    final localIdentity = call == null || call.isEmpty
+        ? null
+        : controller.aprsSsid == 0
+        ? call
+        : '$call-${controller.aprsSsid}';
+
+    if (localIdentity == null) return Colors.blue;
+
+    final source = entry.source.trim().toUpperCase();
+    final destination = entry.destination.trim().toUpperCase();
+    final via = entry.via.trim().toUpperCase();
+
+    // A packet sourced by us and received back through a path is a
+    // digipeated/relayed copy of one of our own transmissions.
+    if (source == localIdentity && via != 'RF') {
+      return Colors.amber;
+    }
+    if (destination == localIdentity) {
+      return Colors.green;
+    }
+    return Colors.blue;
   }
 
   void _flashTx() {
@@ -829,12 +855,12 @@ class _TransportStatusState extends State<_TransportStatus> {
     });
   }
 
-  void _flashRx() {
+  void _flashRx(Color color) {
     _rxTimer?.cancel();
-    if (mounted && !_showRx) setState(() => _showRx = true);
+    if (mounted && _rxColor != color) setState(() => _rxColor = color);
     _rxTimer = Timer(_activityVisibleDuration, () {
       _rxTimer = null;
-      if (mounted && _showRx) setState(() => _showRx = false);
+      if (mounted && _rxColor != null) setState(() => _rxColor = null);
     });
   }
 
@@ -925,11 +951,11 @@ class _TransportStatusState extends State<_TransportStatus> {
                             height: 18,
                             child: Center(
                               child: Opacity(
-                                opacity: _showRx ? 1 : 0,
-                                child: const _TrafficArrow(
-                                  key: Key('aprsRxActivity'),
+                                opacity: _rxColor == null ? 0 : 1,
+                                child: _TrafficArrow(
+                                  key: const Key('aprsRxActivity'),
                                   upward: false,
-                                  color: Colors.green,
+                                  color: _rxColor ?? Colors.blue,
                                 ),
                               ),
                             ),
