@@ -338,6 +338,8 @@ class TncSettingsController extends ChangeNotifier {
     OpenQspGetNewBulletins(:final since, :final max) =>
       'GET_NEW_BULLETINS since=$since max=$max',
     OpenQspGetBulletin(:final sequence) => 'GET_BULLETIN sequence=$sequence',
+    OpenQspGetMessage(:final peer, :final conversationSequence) =>
+      'GET_MESSAGE peer=$peer conversation_sequence=$conversationSequence',
     OpenQspGetCapabilities() => 'GET_CAPABILITIES',
     OpenQspMessage(:final author, :final recipient, :final body, :final sequence) =>
       'MESSAGE seq=$sequence from=$author to=$recipient body="$body"',
